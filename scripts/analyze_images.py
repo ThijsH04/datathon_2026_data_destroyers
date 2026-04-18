@@ -490,8 +490,10 @@ def _get_device() -> str:
     if not HAS_CLIP:
         return "cpu"
     if torch.cuda.is_available():
+        print ("CUDA available, using GPU for CLIP inference.")
         return "cuda"
     if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        print (" MPS available, using MPS for CLIP inference.")
         return "mps"
     return "cpu"
 
