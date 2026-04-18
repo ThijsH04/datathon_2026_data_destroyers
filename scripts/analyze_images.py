@@ -1136,12 +1136,16 @@ async def run(concurrency: int, limit: int | None, dry_run: bool, aggregate_only
     log.info("Loaded %d listings", len(listings))
     listings = [l for l in listings if extract_image_urls(l.get("images_json"))]
     log.info("%d listings have processable image URLs", len(listings))
-    if limit:
-        listings = listings[:limit]
-        log.info("Capped to %d listings (--limit)", len(listings))
 
     done_pairs = already_processed_images(features_conn)
     log.info("%d image slots already processed", len(done_pairs))
+
+    # Remove already-done listings, THEN cap — so --limit means "N new listings"
+    listings = [l for l in listings if (l["listing_id"], 0) not in done_pairs]
+    log.info("%d listings remaining to process", len(listings))
+    if limit:
+        listings = listings[:limit]
+        log.info("Capped to %d listings (--limit)", len(listings))
 
     semaphore = asyncio.Semaphore(concurrency)
     claude = anthropic.AsyncAnthropic(api_key=api_key)
