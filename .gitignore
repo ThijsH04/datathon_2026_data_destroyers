@@ -9,6 +9,8 @@ data/
 *.sqlite
 *.sqlite3
 
+raw_data/
+
 .coverage
 htmlcov/
 
