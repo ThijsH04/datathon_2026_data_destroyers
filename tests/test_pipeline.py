@@ -12,6 +12,47 @@ def test_extract_hard_facts_returns_stub_structure() -> None:
     assert isinstance(result, HardFilters)
 
 
+def test_landmark_city_is_not_promoted_to_hard_city_filter(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.hard_fact_extraction._llm_extractor.extract_combined",
+        lambda query: None,
+    )
+    result = extract_hard_facts("quiet flat near ETH Zürich, max 15 min walk, 3 rooms")
+
+    assert result.city is None
+    assert result.min_rooms == 2.5
+    assert result.max_rooms == 3.5
+
+
+def test_hedged_features_do_not_become_hard_filters(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.hard_fact_extraction._llm_extractor.extract_combined",
+        lambda query: None,
+    )
+    result = extract_hard_facts(
+        "3-room flat in Zürich, ideally with a balcony, parking would be nice, elevator if possible"
+    )
+
+    assert result.city == ["Zürich"]
+    assert result.features is None
+
+
+def test_llm_hard_guards_normalize_exact_room_bounds_and_landmark_city(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.hard_fact_extraction._llm_extractor.extract_combined",
+        lambda query: {
+            "hard": {"city": ["Zürich"], "min_rooms": 4.0, "max_rooms": 4.5},
+            "soft": {},
+        },
+    )
+
+    result = extract_hard_facts("quiet flat near ETH Zürich, 4 rooms")
+
+    assert result.city is None
+    assert result.min_rooms == 3.5
+    assert result.max_rooms == 4.5
+
+
 def test_participant_soft_fact_modules_are_importable() -> None:
     candidates = [{"listing_id": "1", "title": "Example"}]
 

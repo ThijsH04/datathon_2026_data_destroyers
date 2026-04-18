@@ -9,6 +9,100 @@ def test_extract_soft_facts_returns_stub_structure() -> None:
     assert isinstance(result, dict)
 
 
+def test_rule_fallback_detects_conflicting_soft_preferences(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.soft_fact_extraction._llm_extractor.extract_combined",
+        lambda query: None,
+    )
+    result = extract_soft_facts(
+        "affordable apartment right in the city centre of Zürich, ideally under 1800 CHF"
+    )
+
+    assert result["source"] == "rules"
+    assert result["preferences"]["cheap"] == result["preferences"]["central"]
+    assert ["cheap", "central"] in result["conflicts"]
+    assert result["soft_budget_hint"] == "value_sensitive"
+
+
+def test_rule_fallback_keeps_hedged_features_soft(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.soft_fact_extraction._llm_extractor.extract_combined",
+        lambda query: None,
+    )
+    result = extract_soft_facts(
+        "3-room flat in Zürich, ideally with a balcony, parking would be nice, elevator if possible"
+    )
+
+    assert result["feature_boosts"]["feature_balcony"] == 0.6
+    assert result["feature_boosts"]["feature_parking"] == 0.6
+    assert result["feature_boosts"]["feature_elevator"] == 0.6
+
+
+def test_rule_fallback_budget_hint_lowest(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.soft_fact_extraction._llm_extractor.extract_combined",
+        lambda query: None,
+    )
+    result = extract_soft_facts("cheapest available studio in Basel I can find")
+
+    assert result["soft_budget_hint"] == "lowest"
+    assert result["soft_max_price"] == 1
+
+
+def test_llm_soft_guards_remove_unrelated_transport_and_too_bright(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.soft_fact_extraction._llm_extractor.extract_combined",
+        lambda query: {
+            "hard": {"features": ["balcony"]},
+            "soft": {
+                "preferences": {
+                    "bright": 1.3,
+                    "modern": 1.1,
+                    "near_transport": 0.9,
+                },
+                "anchors": [{"label": "ETH Zürich", "lat": 47.3768, "lon": 8.5492}],
+                "soft_budget_hint": "none",
+                "conflicts": [],
+                "dominant_signal": None,
+                "negations": [],
+            },
+        },
+    )
+
+    result = extract_soft_facts(
+        "too bright, modern apartment near ETH Zürich with balcony, 4 rooms, max 4000 CHF"
+    )
+
+    assert result["source"] == "llm"
+    assert "bright" not in result["preferences"]
+    assert "near_transport" not in result["preferences"]
+    assert result["preferences"]["modern"] == 1.1
+    assert result["preferences"]["balcony_pref"] == 0.8
+    assert result["feature_boosts"]["feature_balcony"] == 0.8
+    assert "too_bright" in result["negations"]
+
+
+def test_llm_soft_guard_keeps_explicit_transport(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.soft_fact_extraction._llm_extractor.extract_combined",
+        lambda query: {
+            "hard": {},
+            "soft": {
+                "preferences": {"near_transport": 1.2},
+                "anchors": [],
+                "soft_budget_hint": "none",
+                "conflicts": [],
+                "dominant_signal": None,
+                "negations": [],
+            },
+        },
+    )
+
+    result = extract_soft_facts("Wohnung in der Nähe vom Hauptbahnhof Zürich")
+
+    assert result["preferences"]["near_transport"] == 1.2
+
+
 def test_filter_soft_facts_returns_candidate_subset() -> None:
     candidates = [{"listing_id": "1"}, {"listing_id": "2"}]
 

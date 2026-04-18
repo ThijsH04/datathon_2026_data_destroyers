@@ -1,5 +1,8 @@
 .DS_Store
 .venv/
+.env
+.env.*
+!.env.example
 .pytest_cache/
 __pycache__/
 *.pyc
