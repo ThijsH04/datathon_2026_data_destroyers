@@ -1,21 +1,33 @@
 from __future__ import annotations
+from bs4 import BeautifulSoup
 
+import re
 import json
 from datetime import date
 from typing import Any
 
 
-def _clean_text(value: str | None) -> str | None:
+def _clean_text(value: str | None, process_description: bool ) -> str | None:
     if value is None:
         return None
-    cleaned = value.strip()
-    if not cleaned or cleaned.upper() == "NULL":
+    pre_html = value.strip()
+    if not pre_html or pre_html.upper() == "NULL":
         return None
-    return cleaned
+    if not process_description:
+        return pre_html
+    cleaned = BeautifulSoup(pre_html, "lxml").get_text(" ", strip=True)
+    # Step 1: remove URLs
+    cleaned = re.sub(r'https?://[^\s]+', '', cleaned).strip()
+    # Step 2: remove punctuation
+    cleaned = re.sub(r'[^\w\s]', '', cleaned).strip()
+
+    # Step 3: collapse extra spaces
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
+    return cleaned.lower()
 
 
 def _parse_json_object(value: str | None) -> dict[str, Any]:
-    cleaned = _clean_text(value)
+    cleaned = _clean_text(value, False)
     if not cleaned:
         return {}
     try:
@@ -26,7 +38,7 @@ def _parse_json_object(value: str | None) -> dict[str, Any]:
 
 
 def _parse_float(value: str | None) -> float | None:
-    cleaned = _clean_text(value)
+    cleaned = _clean_text(value, False)
     if cleaned is None:
         return None
     normalized = cleaned.replace("'", "").replace(",", ".")
@@ -44,7 +56,7 @@ def _parse_int(value: str | None) -> int | None:
 
 
 def _parse_bool(value: str | None) -> bool | None:
-    cleaned = _clean_text(value)
+    cleaned = _clean_text(value, False)
     if cleaned is None:
         return None
 
@@ -107,7 +119,7 @@ def _main_data_flag(
 
 
 def _parse_date(value: str | None) -> str | None:
-    cleaned = _clean_text(value)
+    cleaned = _clean_text(value, False)
     if cleaned is None:
         return None
 
@@ -249,22 +261,23 @@ def _derive_features(
 
 def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
     location = _parse_json_object(row.get("location_address"))
-    city = _clean_text(row.get("object_city")) or _clean_text(location.get("City"))
-    postal_code = _clean_text(row.get("object_zip")) or _clean_text(location.get("PostalCode"))
-    canton = _clean_text(row.get("object_state")) or _clean_text(location.get("canton"))
+    city = _clean_text(row.get("object_city"), False) or _clean_text(location.get("City"), False)
+    postal_code = _clean_text(row.get("object_zip"), False) or _clean_text(location.get("PostalCode"), False)
+    canton = _clean_text(row.get("object_state"), False) or _clean_text(location.get("canton"), False)
     canton = canton.upper() if canton else None
-    title = _clean_text(row.get("title")) or "Untitled listing"
-    description = _clean_text(row.get("object_description")) or _clean_text(row.get("remarks"))
-    offer_type = _clean_text(row.get("offer_type"))
+    title = _clean_text(row.get("title"), False) or "Untitled listing"
+    description = _clean_text(row.get("object_description"), False) or _clean_text(row.get("remarks"), False)
+    processed_description = _clean_text(row.get("object_description"), True) or _clean_text(row.get("remarks"), True)
+    offer_type = _clean_text(row.get("offer_type"), False)
     offer_type = offer_type.upper() if offer_type else None
     orig_data = _parse_json_object(row.get("orig_data"))
     feature_values, enabled_features = _derive_features(row, orig_data)
     images = _parse_json_object(row.get("images"))
     location_address = _parse_json_object(row.get("location_address"))
-    street = _clean_text(row.get("object_street"))
+    street = _clean_text(row.get("object_street"), False)
     if street is None:
-        street_name = _clean_text(location.get("Street"))
-        street_number = _clean_text(location.get("StreetNumber"))
+        street_name = _clean_text(location.get("Street"), False)
+        street_number = _clean_text(location.get("StreetNumber"), False)
         if street_name and street_number:
             street = f"{street_name} {street_number}"
         else:
@@ -272,10 +285,11 @@ def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
 
     return (
         str(row.get("id", "")).strip(),
-        _clean_text(row.get("platform_id")),
-        _clean_text(row.get("scrape_source")),
+        _clean_text(row.get("platform_id"), False),
+        _clean_text(row.get("scrape_source"), False),
         title,
         description,
+        processed_description,
         street,
         city,
         postal_code,
@@ -305,9 +319,9 @@ def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
         1 if feature_values["minergie_certified"] is True else 0 if feature_values["minergie_certified"] is False else None,
         json.dumps(enabled_features, ensure_ascii=True),
         offer_type,
-        _clean_text(row.get("object_category")),
-        _clean_text(row.get("object_type")),
-        _clean_text(row.get("platform_url")),
+        _clean_text(row.get("object_category"), False),
+        _clean_text(row.get("object_type"), False),
+        _clean_text(row.get("platform_url"), False),
         json.dumps(images, ensure_ascii=True),
         json.dumps(location_address, ensure_ascii=True),
         json.dumps(orig_data, ensure_ascii=True),

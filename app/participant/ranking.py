@@ -28,6 +28,7 @@ def _to_listing_data(candidate: dict[str, Any]) -> ListingData:
         id=str(candidate["listing_id"]),
         title=candidate["title"],
         description=candidate.get("description"),
+        processed_description=candidate.get("processed_description"),
         street=candidate.get("street"),
         city=candidate.get("city"),
         postal_code=candidate.get("postal_code"),
