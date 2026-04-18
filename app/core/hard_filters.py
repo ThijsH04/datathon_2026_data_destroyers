@@ -24,6 +24,8 @@ class HardFilterParams:
     features: list[str] | None = None
     offer_type: str | None = None
     object_category: list[str] | None = None
+    min_living_area_sqm: int | None = None
+    max_living_area_sqm: int | None = None
     limit: int = 20
     offset: int = 0
     sort_by: str | None = None
@@ -91,6 +93,14 @@ def search_listings(db_path: Path, filters: HardFilterParams) -> list[dict[str, 
     if filters.offer_type:
         where_clauses.append("UPPER(offer_type) = ?")
         params.append(filters.offer_type.upper())
+    
+    if filters.min_living_area_sqm is not None:
+        where_clauses.append("living_area_sqm >= ?")
+        params.append(filters.min_living_area_sqm)
+
+    if filters.max_living_area_sqm is not None:
+        where_clauses.append("living_area_sqm <= ?")
+        params.append(filters.max_living_area_sqm)
 
     object_category = _normalize_list(filters.object_category)
     if object_category:
