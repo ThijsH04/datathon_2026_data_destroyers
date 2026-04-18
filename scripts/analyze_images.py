@@ -390,6 +390,9 @@ def load_listings(limit: int | None, exclude_sources: list[str] | None = None) -
 # Image URL extraction
 # ---------------------------------------------------------------------------
 
+_COMPARIS_BASE = "https://www.comparis.ch"
+
+
 def extract_image_urls(images_json: str | None) -> list[str]:
     """Return all valid image URLs from images_json, in order."""
     if not images_json:
@@ -404,8 +407,13 @@ def extract_image_urls(images_json: str | None) -> list[str]:
         if not isinstance(item, dict):
             continue
         url = item.get("url", "").strip()
-        if url:
-            urls.append(url)
+        if not url:
+            continue
+        # Skip relative COMPARIS API URLs (require browser session cookies).
+        # Keep absolute CDN URLs and SRED local paths (/raw-data-images/).
+        if url.startswith("/") and not url.startswith("/raw-data-images/"):
+            continue
+        urls.append(url)
     return urls
 
 
@@ -557,7 +565,7 @@ def filter_images(
         log.debug("After dedup: %d images", len(raw_images))
 
     # --- Step 2: interior classification via CLIP ---
-    if HAS_CLIP and HAS_PIL and len(raw_images) > 1:
+    if HAS_CLIP and HAS_PIL and len(raw_images) > 1 and interior_threshold > 0:
         _load_clip()
         try:
             text_tokens = _clip_tokenizer(_INTERIOR_PROMPTS + _EXTERIOR_PROMPTS)
@@ -755,12 +763,10 @@ async def analyse_image(
     image_b64: str,
     media_type: str,
     claude: anthropic.AsyncAnthropic,
-    semaphore: asyncio.Semaphore,
     tier: int = 1,
     include_description: bool = True,
 ) -> dict[str, Any]:
-    async with semaphore:
-        response = await claude.messages.create(
+    response = await claude.messages.create(
             model="claude-haiku-4-5-20251001",
             max_tokens=512 if not include_description else 1024,
             system=[{
@@ -912,6 +918,26 @@ async def process_listing(
                  listing_id, tier, object_type, len(urls))
         return []
 
+    # Gate the entire listing (image fetch + Claude call) to limit concurrency
+    async with semaphore:
+        return await _process_listing_inner(
+            listing_id, scrape_source, urls, tier,
+            http_client, claude, resize_px, dedup_threshold, interior_threshold, include_description
+        )
+
+
+async def _process_listing_inner(
+    listing_id: str,
+    scrape_source: str,
+    urls: list[str],
+    tier: int,
+    http_client: httpx.AsyncClient,
+    claude: anthropic.AsyncAnthropic,
+    resize_px: int,
+    dedup_threshold: int,
+    interior_threshold: float,
+    include_description: bool,
+) -> list[dict[str, Any]]:
     # Fetch all images, skip individual failures
     raw_images: list[bytes] = []
     for idx, url in enumerate(urls):
@@ -933,25 +959,30 @@ async def process_listing(
                 resp.raise_for_status()
                 raw_images.append(resp.content)
         except Exception as exc:
-            log.debug("Fetch failed %s image[%d]: %s", listing_id, idx, exc)
+            log.warning("Fetch failed %s image[%d]: %s: %s", listing_id, idx, type(exc).__name__, exc)
 
     if not raw_images:
         return [_error_image_row(listing_id, scrape_source, 0,
                                  urls[0] if urls else "", "all_images_failed")]
 
-    # Filter: drop near-duplicates and non-interior images
-    raw_images = filter_images(raw_images, dedup_threshold, interior_threshold)
+    # Filter: drop near-duplicates and non-interior images (CPU/MPS-bound — run off event loop)
+    loop = asyncio.get_running_loop()
+    raw_images = await loop.run_in_executor(
+        None, filter_images, raw_images, dedup_threshold, interior_threshold
+    )
 
-    # Stitch into a single grid, encode as base64
+    # Stitch into a single grid, encode as base64 (also CPU-bound)
     try:
-        grid_bytes = _build_grid(raw_images, tile_px=resize_px or 300)
+        grid_bytes = await loop.run_in_executor(
+            None, _build_grid, raw_images, resize_px or 300
+        )
         grid_b64 = base64.standard_b64encode(grid_bytes).decode()
     except Exception as exc:
         return [_error_image_row(listing_id, scrape_source, 0, urls[0], f"grid_{exc}")]
 
     # One API call for the whole listing
     try:
-        features, raw_text = await analyse_image(grid_b64, "image/jpeg", claude, semaphore, tier, include_description)
+        features, raw_text = await analyse_image(grid_b64, "image/jpeg", claude, tier, include_description)
         row = _build_image_row(listing_id, scrape_source, 0, "|".join(urls), features, raw_text)
         return [row]
     except Exception as exc:
@@ -1101,8 +1132,13 @@ async def run(concurrency: int, limit: int | None, dry_run: bool, aggregate_only
     log.info("Loading listings from %s", MAIN_DB_PATH)
     if exclude_sources:
         log.info("Excluding sources: %s", exclude_sources)
-    listings = load_listings(limit, exclude_sources)
+    listings = load_listings(None, exclude_sources)
     log.info("Loaded %d listings", len(listings))
+    listings = [l for l in listings if extract_image_urls(l.get("images_json"))]
+    log.info("%d listings have processable image URLs", len(listings))
+    if limit:
+        listings = listings[:limit]
+        log.info("Capped to %d listings (--limit)", len(listings))
 
     done_pairs = already_processed_images(features_conn)
     log.info("%d image slots already processed", len(done_pairs))
@@ -1159,6 +1195,9 @@ async def run(concurrency: int, limit: int | None, dry_run: bool, aggregate_only
             if pbar:
                 pbar.set_postfix(ok=total_ok, err=total_errors)
                 pbar.update(1)
+
+            if completed % 10 == 0:
+                print(f"[{completed}/{len(tasks)}] ok={total_ok} err={total_errors}", flush=True)
 
             # Flush to disk periodically so a disconnect doesn't lose everything
             if not dry_run and completed % FLUSH_EVERY == 0:
