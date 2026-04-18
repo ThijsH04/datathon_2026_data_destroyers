@@ -610,7 +610,7 @@ async def fetch_image_b64(url: str, client: httpx.AsyncClient, max_px: int = 0) 
 
     else:
         # Public CDN URL (COMPARIS etc.)
-        resp = await client.get(url, timeout=20.0, follow_redirects=True)
+        resp = await client.get(url, follow_redirects=True)
         resp.raise_for_status()
         data = resp.content
         ct = resp.headers.get("content-type", "image/jpeg").split(";")[0].strip()
@@ -914,7 +914,7 @@ async def process_listing(
     raw_images: list[bytes] = []
     for idx, url in enumerate(urls):
         try:
-            resp = await http_client.get(url, timeout=20.0, follow_redirects=True) \
+            resp = await http_client.get(url, follow_redirects=True) \
                 if not url.startswith("/raw-data-images/") and ".amazonaws.com/" not in url \
                 else None
 
@@ -1122,8 +1122,17 @@ async def run(concurrency: int, limit: int | None, dry_run: bool, aggregate_only
         buffer.clear()
 
     async with httpx.AsyncClient(
-        headers={"User-Agent": "datathon-image-analyzer/1.0"},
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Referer": "https://www.comparis.ch/",
+        },
         limits=httpx.Limits(max_connections=concurrency * 3),
+        timeout=httpx.Timeout(10.0),
     ) as http_client:
         tasks = [
             process_listing(l, http_client, claude, semaphore, done_pairs, dry_run,
