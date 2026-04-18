@@ -23,7 +23,7 @@ def merge(db_paths: list[Path], out_path: Path) -> None:
 
     first = sqlite3.connect(db_paths[0])
     schema_rows = first.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL"
+        "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL AND name != 'sqlite_sequence'"
     ).fetchall()
     first.close()
 
@@ -41,7 +41,7 @@ def merge(db_paths: list[Path], out_path: Path) -> None:
         src.row_factory = sqlite3.Row
 
         tables = [r[0] for r in src.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'"
         ).fetchall()]
 
         for table in tables:
