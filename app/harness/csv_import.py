@@ -89,7 +89,7 @@ def import_csvs(connection: sqlite3.Connection, csv_paths: Iterable[Path]) -> No
 
             connection.executemany(
                 """
-                INSERT INTO listings (
+                INSERT OR IGNORE INTO listings (
                     listing_id,
                     platform_id,
                     scrape_source,
@@ -152,8 +152,7 @@ def import_csvs(connection: sqlite3.Connection, csv_paths: Iterable[Path]) -> No
                     images_json,
                     location_address_json,
                     orig_data_json,
-                    raw_json,
-                    
+                    raw_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,

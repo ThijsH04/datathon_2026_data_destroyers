@@ -24,10 +24,18 @@ def _default_db_path() -> Path:
     return _project_root() / "data" / "listings.db"
 
 
+def _default_image_features_db_path() -> Path:
+    configured = os.getenv("IMAGE_FEATURES_DB_PATH")
+    if configured:
+        return Path(configured)
+    return _project_root() / "data" / "image_features_merged.db"
+
+
 @dataclass(slots=True)
 class Settings:
     raw_data_dir: Path
     db_path: Path
+    image_features_db_path: Path
     s3_bucket: str
     s3_region: str
     s3_prefix: str
@@ -37,6 +45,7 @@ def get_settings() -> Settings:
     return Settings(
         raw_data_dir=_find_default_raw_data_dir(),
         db_path=_default_db_path(),
+        image_features_db_path=_default_image_features_db_path(),
         s3_bucket=os.getenv(
             "LISTINGS_S3_BUCKET",
             "crawl-data-951752554117-eu-central-2-an",
