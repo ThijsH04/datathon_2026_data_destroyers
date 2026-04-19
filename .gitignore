@@ -1,3 +1,5 @@
+.env
+.env.*
 .DS_Store
 .venv/
 .pytest_cache/
@@ -14,3 +16,5 @@ htmlcov/
 
 apps_sdk/web/node_modules/
 apps_sdk/web/dist/
+frontend/.claude/
+.claude/
