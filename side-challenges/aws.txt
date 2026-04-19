@@ -1,0 +1,1 @@
+For the AWS challende our team employed bedrock during our data filtering stage. We were lacking some data describing whether a housing location was a house, appartment, family home etc. We passed the desciprtion of the location to claude, which was running on bedrock, resulting in a very fast response for the 22 thousand missing fields.
