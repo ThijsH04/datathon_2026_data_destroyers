@@ -69,3 +69,13 @@ This repo now functions as a robust baseline for:
 - improving ranking quality with richer signals
 - shipping a demonstrable, API-first prototype for challenge evaluation
 
+### Data Destroyers - Demo 
+- https://drive.google.com/file/d/1wWimS0oiy3e6t2AmhznZhMSCFdc8CWom/view?usp=share_link
+
+### Presentation Link
+
+- https://docs.google.com/presentation/d/1BRtDmjukmAdJsQc266ao13Ce_U9LH3nhfzNNeEwSqyM/edit?usp=sharing
+
+### Notes
+- To run the code make sure to have API key to set for Claude in .env.example
+
