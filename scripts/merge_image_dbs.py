@@ -28,6 +28,8 @@ def merge(db_paths: list[Path], out_path: Path) -> None:
     first.close()
 
     for (sql,) in schema_rows:
+        table_name = sql.split()[2]  # CREATE TABLE <name> ...
+        out.execute(f"DROP TABLE IF EXISTS {table_name}")
         out.execute(sql)
     out.commit()
 
