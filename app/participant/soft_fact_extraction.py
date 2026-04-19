@@ -109,6 +109,7 @@ def extract_soft_facts(query: str) -> dict[str, Any]:
 
     # Primary: use the shared LLM extraction (cached, reused by hard extractor)
     llm_result = _llm_extractor.extract_combined(query)
+    print(llm_result)
     if llm_result is not None:
         soft = llm_result.get("soft", {})
         hard = llm_result.get("hard", {})

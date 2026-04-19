@@ -12,7 +12,9 @@ from app.db import get_connection
 @dataclass(slots=True)
 class HardFilterParams:
     city: list[str] | None = None
+    excluded_city: list[str] | None = None
     postal_code: list[str] | None = None
+    excluded_postal_code: list[str] | None = None
     canton: str | None = None
     min_price: int | None = None
     max_price: int | None = None
@@ -55,121 +57,150 @@ def _normalize_list(values: list[str] | None) -> list[str] | None:
 
 
 def search_listings(db_path: Path, filters: HardFilterParams) -> list[dict[str, Any]]:
-    where_clauses: list[str] = []
-    params: list[Any] = []
+    positive_where_clauses: list[str] = []
+    positive_params: list[Any] = []
+    negative_where_clauses: list[str] = []
+    negative_params: list[Any] = []
 
     city = _normalize_list(filters.city)
     if city:
         placeholders = ", ".join("?" for _ in city)
-        where_clauses.append(f"LOWER(city) IN ({placeholders})")
-        params.extend(value.lower() for value in city)
+        positive_where_clauses.append(f"LOWER(city) IN ({placeholders})")
+        positive_params.extend(value.lower() for value in city)
+
+    excluded_city = _normalize_list(filters.excluded_city)
+    if excluded_city:
+        placeholders = ", ".join("?" for _ in excluded_city)
+        negative_where_clauses.append(f"LOWER(city) NOT IN ({placeholders})")
+        negative_params.extend(value.lower() for value in excluded_city)
 
     postal_code = _normalize_list(filters.postal_code)
     if postal_code:
         placeholders = ", ".join("?" for _ in postal_code)
-        where_clauses.append(f"postal_code IN ({placeholders})")
-        params.extend(postal_code)
+        positive_where_clauses.append(f"postal_code IN ({placeholders})")
+        positive_params.extend(postal_code)
+
+    excluded_postal_code = _normalize_list(filters.excluded_postal_code)
+    if excluded_postal_code:
+        placeholders = ", ".join("?" for _ in excluded_postal_code)
+        negative_where_clauses.append(f"postal_code NOT IN ({placeholders})")
+        negative_params.extend(excluded_postal_code)
 
     if filters.canton:
-        where_clauses.append("UPPER(canton) = ?")
-        params.append(filters.canton.upper())
+        positive_where_clauses.append("UPPER(canton) = ?")
+        positive_params.append(filters.canton.upper())
 
     if filters.min_price is not None:
-        where_clauses.append("price >= ?")
-        params.append(filters.min_price)
+        positive_where_clauses.append("price >= ?")
+        positive_params.append(filters.min_price)
 
     if filters.max_price is not None:
-        where_clauses.append("price <= ?")
-        params.append(filters.max_price)
+        positive_where_clauses.append("price <= ?")
+        positive_params.append(filters.max_price)
 
     if filters.min_rooms is not None:
-        where_clauses.append("rooms >= ?")
-        params.append(filters.min_rooms)
+        positive_where_clauses.append("rooms >= ?")
+        positive_params.append(filters.min_rooms)
 
     if filters.max_rooms is not None:
-        where_clauses.append("rooms <= ?")
-        params.append(filters.max_rooms)
+        positive_where_clauses.append("rooms <= ?")
+        positive_params.append(filters.max_rooms)
 
     if filters.offer_type:
-        where_clauses.append("UPPER(offer_type) = ?")
-        params.append(filters.offer_type.upper())
+        positive_where_clauses.append("UPPER(offer_type) = ?")
+        positive_params.append(filters.offer_type.upper())
     
     if filters.min_living_area_sqm is not None:
-        where_clauses.append("living_area_sqm >= ?")
-        params.append(filters.min_living_area_sqm)
+        positive_where_clauses.append("living_area_sqm >= ?")
+        positive_params.append(filters.min_living_area_sqm)
 
     if filters.max_living_area_sqm is not None:
-        where_clauses.append("living_area_sqm <= ?")
-        params.append(filters.max_living_area_sqm)
+        positive_where_clauses.append("living_area_sqm <= ?")
+        positive_params.append(filters.max_living_area_sqm)
 
     object_category = _normalize_list(filters.object_category)
     if object_category:
         placeholders = ", ".join("?" for _ in object_category)
-        where_clauses.append(f"object_category IN ({placeholders})")
-        params.extend(object_category)
+        positive_where_clauses.append(f"object_category IN ({placeholders})")
+        positive_params.extend(object_category)
 
     features = _normalize_list(filters.features)
     if features:
         for feature_name in features:
             column_name = FEATURE_COLUMN_MAP.get(feature_name)
             if column_name:
-                where_clauses.append(f"{column_name} = 1")
+                positive_where_clauses.append(f"{column_name} = 1")
 
-    query = """
-        SELECT
-            listing_id,
-            title,
-            description,
-            processed_description,
-            street,
-            city,
-            postal_code,
-            canton,
-            price,
-            rooms,
-            area,
-            available_from,
-            latitude,
-            longitude,
-            distance_public_transport,
-            distance_shop,
-            distance_kindergarten,
-            distance_school_1,
-            distance_school_2,
-            transit_count_500m,
-            shops_count_500m,
-            parks_count_500m,
-            schools_count_500m,
-            hospitals_count_500m,
-            nightlife_count_500m,
-            pedestrian_zones_count_500m,
-            dist_to_transit_m,
-            nearest_transit_name,
-            dist_to_shops_m,
-            dist_to_parks_m,
-            dist_to_schools_m,
-            dist_to_hospitals_m,
-            dist_to_nightlife_m,
-            dist_to_pedestrian_zones_m,
-            dist_to_lakes_m,
-            dist_to_rivers_m,
-            dist_to_noisy_roads_m,
-            dist_to_noisy_trains_m,
-            elevation_m,
-            weighted_crime_per_1000,
-            features_json,
-            offer_type,
-            object_category,
-            object_type,
-            original_url,
-            images_json
-        FROM listings
+    select_columns = """
+        listing_id,
+        title,
+        description,
+        processed_description,
+        street,
+        city,
+        postal_code,
+        canton,
+        price,
+        rooms,
+        area,
+        available_from,
+        latitude,
+        longitude,
+        distance_public_transport,
+        distance_shop,
+        distance_kindergarten,
+        distance_school_1,
+        distance_school_2,
+        transit_count_500m,
+        shops_count_500m,
+        parks_count_500m,
+        schools_count_500m,
+        hospitals_count_500m,
+        nightlife_count_500m,
+        pedestrian_zones_count_500m,
+        dist_to_transit_m,
+        nearest_transit_name,
+        dist_to_shops_m,
+        dist_to_parks_m,
+        dist_to_schools_m,
+        dist_to_hospitals_m,
+        dist_to_nightlife_m,
+        dist_to_pedestrian_zones_m,
+        dist_to_lakes_m,
+        dist_to_rivers_m,
+        dist_to_noisy_roads_m,
+        dist_to_noisy_trains_m,
+        elevation_m,
+        weighted_crime_per_1000,
+        features_json,
+        offer_type,
+        object_category,
+        object_type,
+        original_url,
+        images_json
     """
 
-    if where_clauses:
-        query += " WHERE " + " AND ".join(where_clauses)
+    query = f"""
+        WITH positive_candidates AS (
+            SELECT {select_columns}
+            FROM listings
+    """
+
+    if positive_where_clauses:
+        query += " WHERE " + " AND ".join(positive_where_clauses)
+
+    query += """
+        )
+        SELECT *
+        FROM positive_candidates
+    """
+
+    if negative_where_clauses:
+        query += " WHERE " + " AND ".join(negative_where_clauses)
 
     query += " ORDER BY " + _sort_clause(filters.sort_by)
+
+    params = positive_params + negative_params
 
     with get_connection(db_path) as connection:
         rows = connection.execute(query, params).fetchall()

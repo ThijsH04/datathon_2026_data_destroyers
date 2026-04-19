@@ -86,7 +86,9 @@ def query_from_filters(
 def to_hard_filter_params(hard_facts: HardFilters) -> HardFilterParams:
     return HardFilterParams(
         city=hard_facts.city,
+        excluded_city=hard_facts.excluded_city,
         postal_code=hard_facts.postal_code,
+        excluded_postal_code=hard_facts.excluded_postal_code,
         canton=hard_facts.canton,
         min_price=hard_facts.min_price,
         max_price=hard_facts.max_price,

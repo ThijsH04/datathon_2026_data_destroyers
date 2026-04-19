@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 class HardFilters(BaseModel):
     city: list[str] | None = None
+    excluded_city: list[str] | None = None
     postal_code: list[str] | None = None
+    excluded_postal_code: list[str] | None = None
     canton: str | None = None
     min_price: int | None = Field(default=None, ge=0)
     max_price: int | None = Field(default=None, ge=0)

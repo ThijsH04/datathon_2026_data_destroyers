@@ -21,6 +21,7 @@ def health() -> HealthResponse:
 
 @router.post("/listings", response_model=ListingsResponse)
 def listings(request: ListingsQueryRequest) -> ListingsResponse:
+    print("query", request.query)
     settings = get_settings()
     return query_from_text(
         db_path=settings.db_path,

@@ -71,7 +71,7 @@ def main() -> int:
         print("Proceeding with rule-based fallback so you can still sanity-check shape.")
 
     print(f"LLM extractor available: {_llm_extractor.available()}")
-
+    print("hi")
     for query in QUERIES:
         _print_header(query)
 

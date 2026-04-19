@@ -19,6 +19,9 @@ Expected output schema (see `_TOOL_SCHEMA` below):
     {
       "hard": {
           "city": [str],
+          "excluded_city": [str],
+          "postal_code": [str],
+          "excluded_postal_code": [str],
           "canton": str | None,
           "min_price": int | None,
           "max_price": int | None,
@@ -61,7 +64,7 @@ logger = logging.getLogger(__name__)
 
 def _load_local_env() -> None:
     """Load simple KEY=VALUE pairs from a local .env file when present."""
-    env_path = Path(__file__).resolve().parents[2] / ".env"
+    env_path = Path(__file__).resolve().parents[2] / ".env.example"
     if not env_path.exists():
         return
     try:
@@ -146,6 +149,27 @@ _TOOL_SCHEMA: dict[str, Any] = {
                             "Zurich->Zürich, Geneva->Genève, Lucerne->Luzern, "
                             "Berne->Bern. Leave empty if no city is explicitly "
                             "required."
+                        ),
+                    },
+                    "excluded_city": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Swiss city names the user explicitly excludes (e.g. 'not Zürich', 'except Winterthur'). Also include other common spellings for the cities, possibly in different languages, so not Zürich would also exclude Zuerich and Zurich etc."
+                        ),
+                    },
+                    "postal_code": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Swiss postal codes / PLZ / ZIP / NPA values as strings. Always provide postal codes, either when explicitly mentioned or inferred from context like the list cities. Ensure to not leave out possibilities, prefer keeping in too many over keeping too few. Include all feasible postal codes that would fall under the mentioned city and are not ruled out by any other explicit context."
+                        ),
+                    },
+                    "excluded_postal_code": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": (
+                            "Swiss postal codes explicitly excluded by the user (e.g. 'not 8000', 'excluding 8050')."
                         ),
                     },
                     "canton": {
@@ -289,6 +313,9 @@ Examples:
 
 # CITIES & LANDMARKS
 - Normalize to canonical Swiss names: Zurich→Zürich, Geneva→Genève, Lucerne→Luzern.
+- Put explicitly excluded cities into `hard.excluded_city`.
+- Put explicitly excluded postal codes into `hard.excluded_postal_code`.
+- Only emit `hard.postal_code` when explicitly mentioned or clearly required from context.
 - If the user mentions a Swiss landmark (ETH Zurich, HB Zürich, EPFL, CERN, university XYZ, airport), \
 emit it in `soft.anchors` with your best lat/lon. Do NOT put landmark radius in `hard.latitude/longitude/radius_km` \
 unless the user strictly requires a geographic proximity.
@@ -414,6 +441,9 @@ def _sanitize(payload: dict[str, Any]) -> dict[str, Any]:
     clean_hard: dict[str, Any] = {}
     for key in (
         "city",
+        "excluded_city",
+        "postal_code",
+        "excluded_postal_code",
         "canton",
         "min_price",
         "max_price",
@@ -434,6 +464,31 @@ def _sanitize(payload: dict[str, Any]) -> dict[str, Any]:
         if isinstance(value, str) and not value.strip():
             continue
         clean_hard[key] = value
+
+    for list_key in ("city", "excluded_city", "postal_code", "excluded_postal_code"):
+        if list_key not in clean_hard:
+            continue
+        values = clean_hard[list_key]
+        if not isinstance(values, list):
+            clean_hard.pop(list_key, None)
+            continue
+        normalized = [str(v).strip() for v in values if str(v).strip()]
+        if normalized:
+            clean_hard[list_key] = normalized
+        else:
+            clean_hard.pop(list_key, None)
+
+    if "city" in clean_hard and "excluded_city" in clean_hard:
+        excluded_city = set(clean_hard["excluded_city"])
+        clean_hard["city"] = [c for c in clean_hard["city"] if c not in excluded_city]
+        if not clean_hard["city"]:
+            clean_hard.pop("city", None)
+
+    if "postal_code" in clean_hard and "excluded_postal_code" in clean_hard:
+        excluded_postal = set(clean_hard["excluded_postal_code"])
+        clean_hard["postal_code"] = [p for p in clean_hard["postal_code"] if p not in excluded_postal]
+        if not clean_hard["postal_code"]:
+            clean_hard.pop("postal_code", None)
 
     # Features: filter to the known vocabulary so unknown strings don't break SQL
     if "features" in clean_hard:
@@ -508,7 +563,6 @@ def _sanitize(payload: dict[str, Any]) -> dict[str, Any]:
         ),
         "negations": [n for n in (soft.get("negations") or []) if isinstance(n, str)],
     }
-
     return {"hard": clean_hard, "soft": clean_soft}
 
 

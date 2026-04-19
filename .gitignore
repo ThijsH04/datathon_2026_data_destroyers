@@ -1,9 +1,8 @@
-.env
-.env.*
 .DS_Store
 .venv/
 .env
 .env.*
+.env.example
 !.env.example
 .pytest_cache/
 __pycache__/
@@ -15,11 +14,14 @@ data/
 *.sqlite3
 
 raw_data/
+raw_data_/
+raw_data_enriched/
+hex-counts.pmtiles
+tiles.pmtiles
+raw_data_2/
 
 .coverage
 htmlcov/
 
 apps_sdk/web/node_modules/
 apps_sdk/web/dist/
-frontend/.claude/
-.claude/

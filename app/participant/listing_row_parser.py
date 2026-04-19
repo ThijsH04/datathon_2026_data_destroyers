@@ -7,7 +7,7 @@ from datetime import date
 from typing import Any
 
 
-def _clean_text(value: str | None, process_description: bool ) -> str | None:
+def _clean_text(value: str | None, process_description = False) -> str | None:
     if value is None:
         return None
     pre_html = value.strip()
@@ -75,12 +75,6 @@ def _parse_bool(value: str | None) -> bool | None:
         return False
 
     return True if cleaned else None
-
-
-def _bool_to_int(value: bool | None) -> int | None:
-    if value is None:
-        return None
-    return 1 if value else 0
 
 
 def _is_truthy(value: Any) -> bool:
@@ -327,7 +321,7 @@ def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
         _parse_int(row.get("nightlife_count_500m")),
         _parse_int(row.get("pedestrian_zones_count_500m")),
         _parse_distance_m(row.get("dist_to_transit_m")),
-        _clean_text(row.get("nearest_transit_name"), False),
+        _clean_text(row.get("nearest_transit_name")),
         _parse_distance_m(row.get("dist_to_shops_m")),
         _parse_distance_m(row.get("dist_to_parks_m")),
         _parse_distance_m(row.get("dist_to_schools_m")),
@@ -361,58 +355,6 @@ def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
         json.dumps(location_address, ensure_ascii=True),
         json.dumps(orig_data, ensure_ascii=True),
         json.dumps(row, ensure_ascii=True),
-        _clean_text(row.get("status"), False),
-        _clean_text(row.get("time_of_creation"), False),
-        _clean_text(row.get("last_scraped"), False),
-        _clean_text(row.get("object_type_text"), False),
-        _clean_text(row.get("partner_name"), False),
-        _clean_text(row.get("price_type"), False),
-        _clean_text(row.get("agency_name"), False),
-        _clean_text(row.get("agency_phone"), False),
-        _clean_text(row.get("agency_email"), False),
-        _parse_int(row.get("floor")),
-        _parse_int(row.get("year_built")),
-        _bool_to_int(_parse_bool(row.get("prop_balcony"))),
-        _bool_to_int(_parse_bool(row.get("prop_elevator"))),
-        _bool_to_int(_parse_bool(row.get("prop_parking"))),
-        _bool_to_int(_parse_bool(row.get("prop_garage"))),
-        _bool_to_int(_parse_bool(row.get("prop_fireplace"))),
-        _bool_to_int(_parse_bool(row.get("prop_child_friendly"))),
-        _bool_to_int(_parse_bool(row.get("animal_allowed"))),
-        _parse_int(row.get("rent_gross")),
-        _bool_to_int(_parse_bool(row.get("maybe_temporary"))),
-        _bool_to_int(_parse_bool(row.get("is_new_building"))),
-        _clean_text(row.get("supermarket_name"), False),
-        _parse_float(row.get("avg_rent_for_room_type")),
-        _parse_float(row.get("rent_vs_average")),
-        _parse_float(row.get("crime_index_0_100")),
-        _parse_float(row.get("grocery")),
-        _parse_float(row.get("dining")),
-        _parse_float(row.get("cafes")),
-        _parse_float(row.get("nightlife")),
-        _parse_float(row.get("healthcare")),
-        _parse_float(row.get("early_education")),
-        _parse_float(row.get("education")),
-        _parse_float(row.get("parks")),
-        _parse_float(row.get("playgrounds")),
-        _parse_float(row.get("sports")),
-        _parse_float(row.get("cycling")),
-        _parse_float(row.get("transit")),
-        _parse_float(row.get("car_infra")),
-        _parse_float(row.get("culture")),
-        _parse_float(row.get("pet_friendly")),
-        _parse_float(row.get("financial")),
-        _parse_float(row.get("safety")),
-        _parse_float(row.get("shopping")),
-        _parse_float(row.get("personal_care")),
-        _parse_float(row.get("accommodation")),
-        _parse_float(row.get("coworking")),
-        _parse_float(row.get("beaches")),
-        _parse_float(row.get("total")),
-        _parse_float(row.get("_livability")),
-        _parse_float(row.get("_activity")),
-        _clean_text(row.get("_liv_grade"), False),
-        _clean_text(row.get("_act_grade"), False),
     )
 
 

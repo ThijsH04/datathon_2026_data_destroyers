@@ -48,6 +48,18 @@ def test_rule_fallback_extracts_explicit_sort_by(monkeypatch) -> None:
     assert result.sort_by == "price_asc"
 
 
+def test_rule_fallback_extracts_negated_city_and_postal_code(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.participant.hard_fact_extraction._llm_extractor.extract_combined",
+        lambda query: None,
+    )
+    result = extract_hard_facts("3-room flat in Zürich but not Winterthur and excluding 8000")
+
+    assert result.city == ["Zürich"]
+    assert result.excluded_city == ["Winterthur"]
+    assert result.excluded_postal_code == ["8000"]
+
+
 def test_llm_hard_guards_normalize_exact_room_bounds_and_landmark_city(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.participant.hard_fact_extraction._llm_extractor.extract_combined",
@@ -83,7 +95,9 @@ def test_participant_soft_fact_modules_are_importable() -> None:
 def test_harness_service_converts_hard_filters_to_search_params() -> None:
     filters = HardFilters(
         city=["Zurich"],
+        excluded_city=["Winterthur"],
         features=["balcony"],
+        excluded_postal_code=["8000"],
         limit=5,
         offset=2,
         sort_by="price_asc",
@@ -92,7 +106,9 @@ def test_harness_service_converts_hard_filters_to_search_params() -> None:
     params = to_hard_filter_params(filters)
 
     assert params.city == ["Zurich"]
+    assert params.excluded_city == ["Winterthur"]
     assert params.features == ["balcony"]
+    assert params.excluded_postal_code == ["8000"]
     assert params.limit == 5
     assert params.offset == 2
     assert params.sort_by == "price_asc"

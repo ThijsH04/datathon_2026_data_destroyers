@@ -21,36 +21,541 @@ import unicodedata
 from typing import Iterable
 
 from app.models.schemas import HardFilters
-import boto3
+from app.participant import _llm_extractor
+from app.participant._lexicon import (
+    CITY_ALIASES,
+    HARD_FEATURE_KEYWORDS,
+    LOCATION_ANCHORS,
+    PRICE_LOWER_WORDS,
+    PRICE_UPPER_WORDS,
+)
 
+
+_NUM_PATTERN = re.compile(r"\d[\d'.,]*")
+_POSTAL_CODE_PATTERN = re.compile(r"(?<!\d)(\d{4})(?!\d)")
+_HARD_NEGATION_PATTERN = re.compile(
+    r"\b(?:not|no|without|except|excluding|outside|avoid|"
+    r"kein(?:e|en|em|er)?|keine|keinen|ohne|ausser|außer|sans)\b",
+    re.IGNORECASE,
+)
+_SOFTENER_PATTERN = re.compile(
+    r"\b(?:ideally|if possible|preferably|nice to have|optional|bonus|"
+    r"wenn möglich|falls möglich|gerne|am liebsten|möglichst|"
+    r"idéalement|si possible|de préférence)\b",
+    re.IGNORECASE,
+)
+_ROOM_NUM_PATTERN = re.compile(
+    r"""
+    (?P<num>\d+(?:[.,]\d)?)        # number, optionally fractional (3, 3.5, 3,5)
+    [\s\-]*                         # optional whitespace or hyphen ("3-room", "3 Zi")
+    (?:                             # followed by an apartment-size word
+        \+?\s*(?:zi|zim|zimmer|zimmerwohnung|room|rooms|rm|pieces?|pi[eè]ces?|locali)
+        |\.5\b
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_ROOM_RANGE_PATTERN = re.compile(
+    r"""
+    (?P<lo>\d+(?:[.,]\d)?)\s*
+    (?:-|to|bis|and|und)\s*
+    (?P<hi>\d+(?:[.,]\d)?)\s*
+    (?:zi|zim|zimmer|zimmerwohnung|room|rooms|rm|pieces?|pi[eè]ces?|locali)
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_PRICE_RANGE_PATTERN = re.compile(
+    r"between\s+(\d[\d'.,]*)\s+(?:and|to|-)\s+(\d[\d'.,]*)",
+    re.IGNORECASE,
+)
 
 
 def extract_hard_facts(query: str) -> HardFilters:
-    # Intentionally stubbed. Teams are expected to replace this with
-    # their own query understanding or structured extraction logic.
+    """Parse the query into structured hard filters.
 
-    # prompt =     """
-    # You are a housing listings assistant. When a user describes what they're looking for in a home, parse their request and provide hard constraints:
+    Uses Claude when available; falls back to a conservative rule-based
+    parser when the LLM is unavailable or returns nothing useful.
+    """
+    if not query or not query.strip():
+        return HardFilters()
 
-    # **Hard constraints** (must-haves): price ceiling, minimum bedrooms/bathrooms, location/city, property type, pet policy, etc.
+    # Primary: shared Claude extraction (cached, so the soft extractor reuses it).
+    llm_result = _llm_extractor.extract_combined(query)
+    if llm_result is not None:
+        try:
+            hard = _apply_rule_guards(query, dict(llm_result.get("hard") or {}))
+            return HardFilters(**hard)
+        except Exception:
+            # Schema mismatch — fall back silently.
+            pass
 
-    # Output a json file containing the hard and soft constraints. The list of required constraints can be found on https://institutions-interactive-size-apnic.trycloudflare.com/openapi.json. Use this URL for future api calls as well. For features, there are the following options: balcony, elevator, parking, garage, fireplace, child_friendly, pets_allowed, temporary, new_build, wheelchair_accessible, private_laundry,minergie_certified 
-    # Then call the POST /listings/search/filter endpoint with the parsed constraints. Being unable to output anything is fine, give the user suggestions on how they could get an output in that case
-    # """
-    # client = boto3.client("bedrock-runtime", region_name="us-west-2")
-    # try:
-    #     response = client.converse(
-    #         modelId="us.anthropic.claude-haiku-4-5-20251001-v1:0",
-    #         messages=[
-    #             {
-    #                 "role": "user",
-    #                 "content": [{"text": prompt}]
-    #             }
-    #         ]
-    #     )
+    return _rule_based(query)
 
-    #     return i, response["output"]["message"]["content"][0]["text"].strip()
 
-    # except Exception as e:
-    #     return i, f"Error: {str(e)}"
-    return HardFilters()
+# ---------------------------------------------------------------------------
+# Rule-based fallback
+# ---------------------------------------------------------------------------
+
+
+def _apply_rule_guards(query: str, hard: dict[str, object]) -> dict[str, object]:
+    """Make exact hard facts stable even when Claude varies slightly."""
+    norm = _normalize(query)
+
+    cities = _extract_cities(norm)
+    if cities:
+        hard["city"] = cities
+    elif hard.get("city"):
+        # If the only city-looking text is inside a landmark like "ETH Zürich",
+        # keep it as an anchor rather than a hard city filter.
+        hard.pop("city", None)
+
+    # For the LLM path, excluded city/postal-code logic is sourced from the
+    # model output itself. The regex negation parser is used only in fallback.
+    if hard.get("excluded_city") and not isinstance(hard.get("excluded_city"), list):
+        hard.pop("excluded_city", None)
+    if hard.get("excluded_postal_code") and not isinstance(hard.get("excluded_postal_code"), list):
+        hard.pop("excluded_postal_code", None)
+
+    if hard.get("city") and hard.get("excluded_city"):
+        excluded = set(str(v) for v in hard.get("excluded_city") or [])
+        hard["city"] = [c for c in hard.get("city", []) if c not in excluded]
+        if not hard["city"]:
+            hard.pop("city", None)
+
+    if hard.get("postal_code") and hard.get("excluded_postal_code"):
+        excluded = set(str(v) for v in hard.get("excluded_postal_code") or [])
+        hard["postal_code"] = [p for p in hard.get("postal_code", []) if p not in excluded]
+        if not hard["postal_code"]:
+            hard.pop("postal_code", None)
+
+    min_rooms, max_rooms = _extract_room_bounds(norm)
+    if min_rooms is not None or max_rooms is not None:
+        if min_rooms is None:
+            hard.pop("min_rooms", None)
+        else:
+            hard["min_rooms"] = min_rooms
+
+        if max_rooms is None:
+            hard.pop("max_rooms", None)
+        else:
+            hard["max_rooms"] = max_rooms
+
+    sort_by = _extract_sort_by(norm)
+    if sort_by:
+        hard["sort_by"] = sort_by
+    elif hard.get("sort_by") not in {None, "price_asc", "price_desc", "rooms_asc", "rooms_desc"}:
+        hard.pop("sort_by", None)
+
+    return hard
+
+
+def _rule_based(query: str) -> HardFilters:
+    raw = query.strip()
+    norm = _normalize(raw)
+
+    cities, excluded_cities = _extract_cities_with_negation(norm)
+    postal_codes, excluded_postal_codes = _extract_postal_codes_with_negation(norm)
+    min_rooms, max_rooms = _extract_room_bounds(norm)
+    min_price, max_price = _extract_price_bounds(raw, norm)
+    features = _extract_hard_features(norm)
+    offer_type = _extract_offer_type(norm)
+    sort_by = _extract_sort_by(norm)
+
+    return HardFilters(
+        city=cities or None,
+        excluded_city=excluded_cities or None,
+        postal_code=postal_codes or None,
+        excluded_postal_code=excluded_postal_codes or None,
+        min_rooms=min_rooms,
+        max_rooms=max_rooms,
+        min_price=min_price,
+        max_price=max_price,
+        features=features or None,
+        offer_type=offer_type,
+        sort_by=sort_by,
+    )
+
+
+def _normalize(text: str) -> str:
+    lowered = text.lower()
+    lowered = lowered.replace("–", "-").replace("—", "-").replace("\u00a0", " ")
+    return lowered
+
+
+def _strip_accents(text: str) -> str:
+    return "".join(
+        ch for ch in unicodedata.normalize("NFKD", text) if not unicodedata.combining(ch)
+    )
+
+
+def _extract_cities(text: str) -> list[str]:
+    matched: list[str] = []
+    seen: set[str] = set()
+    text_ascii = _strip_accents(text)
+    landmark_spans = _extract_landmark_spans(text, text_ascii)
+    for alias in sorted(CITY_ALIASES.keys(), key=len, reverse=True):
+        alias_ascii = _strip_accents(alias)
+        pattern = rf"(?<![\w]){re.escape(alias)}(?![\w])"
+        pattern_ascii = rf"(?<![\w]){re.escape(alias_ascii)}(?![\w])"
+        matches = list(re.finditer(pattern, text)) or list(
+            re.finditer(pattern_ascii, text_ascii)
+        )
+        if not matches:
+            continue
+        if all(_inside_any_span(match.start(), match.end(), landmark_spans) for match in matches):
+            continue
+        canonical = CITY_ALIASES[alias]
+        if canonical not in seen:
+            seen.add(canonical)
+            matched.append(canonical)
+    return matched
+
+
+def _extract_cities_with_negation(text: str) -> tuple[list[str], list[str]]:
+    positive: list[str] = []
+    excluded: list[str] = []
+    seen_positive: set[str] = set()
+    seen_excluded: set[str] = set()
+
+    text_ascii = _strip_accents(text)
+    landmark_spans = _extract_landmark_spans(text, text_ascii)
+    for alias in sorted(CITY_ALIASES.keys(), key=len, reverse=True):
+        alias_ascii = _strip_accents(alias)
+        pattern = rf"(?<![\w]){re.escape(alias)}(?![\w])"
+        pattern_ascii = rf"(?<![\w]){re.escape(alias_ascii)}(?![\w])"
+        matches = list(re.finditer(pattern, text)) or list(
+            re.finditer(pattern_ascii, text_ascii)
+        )
+        if not matches:
+            continue
+
+        canonical = CITY_ALIASES[alias]
+        for match in matches:
+            if _inside_any_span(match.start(), match.end(), landmark_spans):
+                continue
+
+            if _is_hard_negated(text, match.start(), match.end()):
+                if canonical not in seen_excluded:
+                    seen_excluded.add(canonical)
+                    excluded.append(canonical)
+            else:
+                if canonical not in seen_positive:
+                    seen_positive.add(canonical)
+                    positive.append(canonical)
+
+    positive = [city for city in positive if city not in seen_excluded]
+    return positive, excluded
+
+
+def _extract_landmark_spans(text: str, text_ascii: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    for alias in LOCATION_ANCHORS:
+        # Only suppress a city match when it appears inside a more specific
+        # named place like "ETH Zürich" or "Geneva airport".
+        if not any(city_alias in alias for city_alias in CITY_ALIASES):
+            continue
+        alias_ascii = _strip_accents(alias)
+        pattern = rf"(?<![\w]){re.escape(alias)}(?![\w])"
+        pattern_ascii = rf"(?<![\w]){re.escape(alias_ascii)}(?![\w])"
+        for match in re.finditer(pattern, text):
+            spans.append((match.start(), match.end()))
+        for match in re.finditer(pattern_ascii, text_ascii):
+            spans.append((match.start(), match.end()))
+    return spans
+
+
+def _extract_postal_codes(text: str) -> list[str]:
+    """Extract explicit Swiss postal codes from the query text.
+
+    We keep this conservative: only 4-digit numbers in the plausible Swiss ZIP
+    range that do not look like prices or years are treated as postal codes.
+    """
+    matched: list[str] = []
+    seen: set[str] = set()
+    for match in _POSTAL_CODE_PATTERN.finditer(text):
+        code = match.group(1)
+        try:
+            value = int(code)
+        except ValueError:
+            continue
+
+        if value < 1000 or value > 9658:
+            continue
+
+        before = text[max(0, match.start() - 18) : match.start()]
+        after = text[match.end() : match.end() + 18]
+        context = f"{before} {after}"
+        if any(token in context for token in ("chf", "fr.", "franken", "eur", "€", "$")):
+            continue
+        if any(token in context for token in ("year", "yr", "since", "built", "baujahr")):
+            continue
+
+        if code not in seen:
+            seen.add(code)
+            matched.append(code)
+
+    return matched
+
+
+def _extract_postal_codes_with_negation(text: str) -> tuple[list[str], list[str]]:
+    positive: list[str] = []
+    excluded: list[str] = []
+    seen_positive: set[str] = set()
+    seen_excluded: set[str] = set()
+
+    for match in _POSTAL_CODE_PATTERN.finditer(text):
+        code = match.group(1)
+        if not _is_valid_postal_code_candidate(text, match.start(), match.end(), code):
+            continue
+
+        if _is_hard_negated(text, match.start(), match.end()):
+            if code not in seen_excluded:
+                seen_excluded.add(code)
+                excluded.append(code)
+        else:
+            if code not in seen_positive:
+                seen_positive.add(code)
+                positive.append(code)
+
+    positive = [postal for postal in positive if postal not in seen_excluded]
+    return positive, excluded
+
+
+def _is_valid_postal_code_candidate(text: str, start: int, end: int, code: str) -> bool:
+    try:
+        value = int(code)
+    except ValueError:
+        return False
+
+    if value < 1000 or value > 9658:
+        return False
+
+    before = text[max(0, start - 18):start]
+    after = text[end:end + 18]
+    context = f"{before} {after}"
+    if any(token in context for token in ("chf", "fr.", "franken", "eur", "€", "$")):
+        return False
+    if any(token in context for token in ("year", "yr", "since", "built", "baujahr")):
+        return False
+    return True
+
+
+def _is_hard_negated(text: str, start: int, end: int) -> bool:
+    preceding = text[max(0, start - 28):start]
+    following = text[end:min(len(text), end + 12)]
+
+    if _SOFTENER_PATTERN.search(preceding) or _SOFTENER_PATTERN.search(following):
+        return False
+    return bool(_HARD_NEGATION_PATTERN.search(preceding))
+
+
+def _inside_any_span(start: int, end: int, spans: list[tuple[int, int]]) -> bool:
+    return any(span_start <= start and end <= span_end for span_start, span_end in spans)
+
+
+def _extract_room_bounds(text: str) -> tuple[float | None, float | None]:
+    if re.search(r"\bstudio\b", text):
+        return None, 1.5
+
+    range_match = _ROOM_RANGE_PATTERN.search(text)
+    if range_match:
+        try:
+            lo = float(range_match.group("lo").replace(",", "."))
+            hi = float(range_match.group("hi").replace(",", "."))
+        except ValueError:
+            return None, None
+        if lo > hi:
+            lo, hi = hi, lo
+        return lo, hi
+
+    matches = list(_ROOM_NUM_PATTERN.finditer(text))
+    if not matches:
+        return None, None
+
+    raw_value = matches[0].group("num").replace(",", ".")
+    try:
+        value = float(raw_value)
+    except ValueError:
+        return None, None
+
+    prefix = text[max(0, matches[0].start() - 18) : matches[0].start()]
+    suffix = text[matches[0].end() : matches[0].end() + 8]
+    is_lower_only = bool(
+        re.search(r"\b(at least|min|minimum|ab|mindestens)\s*$", prefix)
+        or "+" in matches[0].group(0)
+    )
+    is_upper_only = bool(
+        re.search(r"\b(at most|max|maximum|bis|höchstens|maximal|up to)\s*$", prefix)
+        or re.search(r"^\s*(or fewer|or less|max)\b", suffix)
+    )
+
+    if is_lower_only:
+        return value, None
+    if is_upper_only:
+        return None, value
+    return value - 0.5, value + 0.5
+
+
+def _extract_price_bounds(raw: str, text: str) -> tuple[int | None, int | None]:
+    range_match = _PRICE_RANGE_PATTERN.search(raw.lower())
+    if range_match:
+        lo = _to_int(range_match.group(1))
+        hi = _to_int(range_match.group(2))
+        if lo and hi and lo > hi:
+            lo, hi = hi, lo
+        return lo, hi
+
+    numbers: list[tuple[int, int, int]] = []
+    for match in _NUM_PATTERN.finditer(text):
+        value = _to_int(match.group(0))
+        if value is None or value < 200 or value > 50_000_000:
+            continue
+        if 1900 <= value <= 2100 and not _looks_like_price_context(text, match.start()):
+            continue
+        numbers.append((match.start(), match.end(), value))
+
+    if not numbers:
+        return None, None
+
+    min_price: int | None = None
+    max_price: int | None = None
+    for start, end, value in numbers:
+        before = text[max(0, start - 25) : start]
+        after = text[end : end + 25]
+        context = f"{before} {after}"
+
+        if any(word in before for word in PRICE_UPPER_WORDS):
+            max_price = _min_or(max_price, value)
+        elif any(word in before for word in PRICE_LOWER_WORDS):
+            min_price = _max_or(min_price, value)
+        elif "chf" in context or "fr." in context or "franken" in context:
+            max_price = _min_or(max_price, value)
+
+    return min_price, max_price
+
+
+def _looks_like_price_context(text: str, idx: int) -> bool:
+    window = text[max(0, idx - 25) : idx + 10]
+    return any(token in window for token in ("chf", "fr.", "franken", "$", "€"))
+
+
+def _to_int(value: str) -> int | None:
+    cleaned = value.replace("'", "").replace(" ", "")
+    if "." in cleaned and cleaned.rsplit(".", 1)[-1].isdigit() and len(cleaned.rsplit(".", 1)[-1]) <= 2:
+        cleaned = cleaned.split(".", 1)[0]
+    cleaned = cleaned.replace(",", "").replace(".", "")
+    try:
+        return int(cleaned)
+    except ValueError:
+        return None
+
+
+def _min_or(current: int | None, candidate: int) -> int:
+    return candidate if current is None else min(current, candidate)
+
+
+def _max_or(current: int | None, candidate: int) -> int:
+    return candidate if current is None else max(current, candidate)
+
+
+def _extract_hard_features(text: str) -> list[str]:
+    softener = re.compile(
+        r"\b(ideally|if possible|nice to have|preferably|hopefully|wenn möglich|"
+        r"falls möglich|gerne|am liebsten|möglichst|ideal|optional|bonus|"
+        r"would be nice|idéalement|idealement|si possible|de préférence)\b",
+        re.IGNORECASE,
+    )
+    following_softener = re.compile(
+        r"^\s*(?:if possible|would be nice|nice to have|optional|bonus|si possible)\b",
+        re.IGNORECASE,
+    )
+
+    matched: list[str] = []
+    seen: set[str] = set()
+    for feature_key, synonyms in HARD_FEATURE_KEYWORDS.items():
+        for synonym in synonyms:
+            pattern = rf"(?<![\w]){re.escape(synonym)}(?![\w])"
+            for match in re.finditer(pattern, text):
+                window_start = max(0, match.start() - 30)
+                window_end = min(len(text), match.end() + 30)
+                preceding = text[window_start : match.start()]
+                following = text[match.end() : window_end]
+                if softener.search(preceding) or following_softener.search(following):
+                    continue
+                if feature_key not in seen:
+                    seen.add(feature_key)
+                    matched.append(feature_key)
+                break
+    return matched
+
+
+def _extract_offer_type(text: str) -> str | None:
+    if re.search(r"\b(buy|kaufen|for sale|to buy|kauf)\b", text):
+        return "SALE"
+    if re.search(r"\b(rent|miete|to rent|mieten|for rent)\b", text):
+        return "RENT"
+    return None
+
+
+def _extract_sort_by(text: str) -> str | None:
+    """Extract explicit ordering requests.
+
+    Keep this narrower than the soft budget/space vocabulary: "cheap" and
+    "spacious" are ranking hints, while "cheapest first" or "largest first"
+    are presentation/order requests.
+    """
+    if re.search(
+        r"\b("
+        r"cheapest|lowest price|least expensive|"
+        r"sort(?:ed)? by price(?:\s*(?:asc|ascending|low(?:est)? first))?|"
+        r"price\s*(?:asc|ascending)|"
+        r"g[uü]nstigste|billigste|preis aufsteigend"
+        r")\b",
+        text,
+    ):
+        return "price_asc"
+
+    if re.search(
+        r"\b("
+        r"most expensive|highest price|priciest|"
+        r"sort(?:ed)? by price\s*(?:desc|descending|high(?:est)? first)|"
+        r"price\s*(?:desc|descending)|"
+        r"teuerste|preis absteigend"
+        r")\b",
+        text,
+    ):
+        return "price_desc"
+
+    if re.search(
+        r"\b("
+        r"largest|biggest|most rooms|"
+        r"sort(?:ed)? by rooms\s*(?:desc|descending|most first)?|"
+        r"rooms\s*(?:desc|descending)|"
+        r"zimmer absteigend|gr[oö]sste"
+        r")\b",
+        text,
+    ):
+        return "rooms_desc"
+
+    if re.search(
+        r"\b("
+        r"smallest|fewest rooms|least rooms|"
+        r"sort(?:ed)? by rooms\s*(?:asc|ascending|fewest first)?|"
+        r"rooms\s*(?:asc|ascending)|"
+        r"zimmer aufsteigend|kleinste"
+        r")\b",
+        text,
+    ):
+        return "rooms_asc"
+
+    return None
+
+
+def _dedupe(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if value not in seen:
+            seen.add(value)
+            out.append(value)
+    return out

@@ -25,6 +25,31 @@ def test_hard_filter_by_city_returns_matching_rows(tmp_path: Path) -> None:
     assert all((row.get("city") or "").lower() == "winterthur" for row in rows)
 
 
+def test_hard_filter_excluded_city_and_postal_code_remove_matches(tmp_path: Path) -> None:
+    db_path = build_database(tmp_path)
+
+    winterthur_rows = search_listings(
+        db_path,
+        HardFilterParams(city=["Winterthur"], limit=20),
+    )
+    assert winterthur_rows
+
+    sample_postal = next((row.get("postal_code") for row in winterthur_rows if row.get("postal_code")), None)
+    assert sample_postal is not None
+
+    filtered = search_listings(
+        db_path,
+        HardFilterParams(
+            city=["Winterthur"],
+            excluded_city=["Winterthur"],
+            excluded_postal_code=[sample_postal],
+            limit=20,
+        ),
+    )
+
+    assert filtered == []
+
+
 def test_hard_filter_by_price_and_rooms_returns_matching_rows(tmp_path: Path) -> None:
     db_path = build_database(tmp_path)
 
