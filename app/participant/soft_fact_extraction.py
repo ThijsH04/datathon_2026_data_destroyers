@@ -336,7 +336,9 @@ def _extract_conflicts(preferences: dict[str, float]) -> list[list[str]]:
     conflict_pairs = [
         ("cheap", "central"),
         ("quiet", "near_transport"),
+        ("quiet", "nightlife"),
         ("spacious", "cheap"),
+        ("green", "central"),
         ("cozy", "modern"),
         ("cozy", "new_pref"),
         ("luxury", "cheap"),

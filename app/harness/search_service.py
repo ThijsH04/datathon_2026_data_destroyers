@@ -40,7 +40,11 @@ def query_from_text(
     candidates = filter_hard_facts(db_path, pool_filters)
     candidates = filter_soft_facts(candidates, soft_facts)
 
-    ranked = rank_listings(candidates, soft_facts)
+    ranked = rank_listings(
+        candidates,
+        soft_facts,
+        preserve_order=hard_facts.sort_by is not None,
+    )
     window = ranked[offset : offset + limit]
 
     return ListingsResponse(
@@ -67,7 +71,11 @@ def query_from_filters(
     candidates = filter_hard_facts(db_path, structured_hard_facts)
     candidates = filter_soft_facts(candidates, soft_facts)
     return ListingsResponse(
-        listings=rank_listings(candidates, soft_facts),
+        listings=rank_listings(
+            candidates,
+            soft_facts,
+            preserve_order=structured_hard_facts.sort_by is not None,
+        ),
         meta={
             "hard_facts": structured_hard_facts.model_dump(exclude_none=True),
             "candidates_considered": len(candidates),

@@ -109,6 +109,12 @@ def _apply_rule_guards(query: str, hard: dict[str, object]) -> dict[str, object]
         else:
             hard["max_rooms"] = max_rooms
 
+    sort_by = _extract_sort_by(norm)
+    if sort_by:
+        hard["sort_by"] = sort_by
+    elif hard.get("sort_by") not in {None, "price_asc", "price_desc", "rooms_asc", "rooms_desc"}:
+        hard.pop("sort_by", None)
+
     return hard
 
 
@@ -121,6 +127,7 @@ def _rule_based(query: str) -> HardFilters:
     min_price, max_price = _extract_price_bounds(raw, norm)
     features = _extract_hard_features(norm)
     offer_type = _extract_offer_type(norm)
+    sort_by = _extract_sort_by(norm)
 
     return HardFilters(
         city=cities or None,
@@ -130,6 +137,7 @@ def _rule_based(query: str) -> HardFilters:
         max_price=max_price,
         features=features or None,
         offer_type=offer_type,
+        sort_by=sort_by,
     )
 
 
@@ -330,6 +338,60 @@ def _extract_offer_type(text: str) -> str | None:
         return "SALE"
     if re.search(r"\b(rent|miete|to rent|mieten|for rent)\b", text):
         return "RENT"
+    return None
+
+
+def _extract_sort_by(text: str) -> str | None:
+    """Extract explicit ordering requests.
+
+    Keep this narrower than the soft budget/space vocabulary: "cheap" and
+    "spacious" are ranking hints, while "cheapest first" or "largest first"
+    are presentation/order requests.
+    """
+    if re.search(
+        r"\b("
+        r"cheapest|lowest price|least expensive|"
+        r"sort(?:ed)? by price(?:\s*(?:asc|ascending|low(?:est)? first))?|"
+        r"price\s*(?:asc|ascending)|"
+        r"g[uü]nstigste|billigste|preis aufsteigend"
+        r")\b",
+        text,
+    ):
+        return "price_asc"
+
+    if re.search(
+        r"\b("
+        r"most expensive|highest price|priciest|"
+        r"sort(?:ed)? by price\s*(?:desc|descending|high(?:est)? first)|"
+        r"price\s*(?:desc|descending)|"
+        r"teuerste|preis absteigend"
+        r")\b",
+        text,
+    ):
+        return "price_desc"
+
+    if re.search(
+        r"\b("
+        r"largest|biggest|most rooms|"
+        r"sort(?:ed)? by rooms\s*(?:desc|descending|most first)?|"
+        r"rooms\s*(?:desc|descending)|"
+        r"zimmer absteigend|gr[oö]sste"
+        r")\b",
+        text,
+    ):
+        return "rooms_desc"
+
+    if re.search(
+        r"\b("
+        r"smallest|fewest rooms|least rooms|"
+        r"sort(?:ed)? by rooms\s*(?:asc|ascending|fewest first)?|"
+        r"rooms\s*(?:asc|ascending)|"
+        r"zimmer aufsteigend|kleinste"
+        r")\b",
+        text,
+    ):
+        return "rooms_asc"
+
     return None
 
 

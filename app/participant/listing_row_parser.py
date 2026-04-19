@@ -43,6 +43,14 @@ def _parse_int(value: str | None) -> int | None:
     return int(round(number))
 
 
+def _parse_distance_m(value: str | None) -> int | None:
+    """Parse meter distances, treating enrichment sentinel values as missing."""
+    parsed = _parse_int(value)
+    if parsed is None or parsed >= 999_999:
+        return None
+    return parsed
+
+
 def _parse_bool(value: str | None) -> bool | None:
     cleaned = _clean_text(value)
     if cleaned is None:
@@ -286,11 +294,32 @@ def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
         _parse_date(row.get("available_from")),
         _parse_float(row.get("geo_lat")),
         _parse_float(row.get("geo_lng")),
-        _parse_int(row.get("distance_public_transport")),
-        _parse_int(row.get("distance_shop")),
-        _parse_int(row.get("distance_kindergarten")),
-        _parse_int(row.get("distance_school_1")),
-        _parse_int(row.get("distance_school_2")),
+        _parse_distance_m(row.get("distance_public_transport")),
+        _parse_distance_m(row.get("distance_shop")),
+        _parse_distance_m(row.get("distance_kindergarten")),
+        _parse_distance_m(row.get("distance_school_1")),
+        _parse_distance_m(row.get("distance_school_2")),
+        _parse_int(row.get("transit_count_500m")),
+        _parse_int(row.get("shops_count_500m")),
+        _parse_int(row.get("parks_count_500m")),
+        _parse_int(row.get("schools_count_500m")),
+        _parse_int(row.get("hospitals_count_500m")),
+        _parse_int(row.get("nightlife_count_500m")),
+        _parse_int(row.get("pedestrian_zones_count_500m")),
+        _parse_distance_m(row.get("dist_to_transit_m")),
+        _clean_text(row.get("nearest_transit_name")),
+        _parse_distance_m(row.get("dist_to_shops_m")),
+        _parse_distance_m(row.get("dist_to_parks_m")),
+        _parse_distance_m(row.get("dist_to_schools_m")),
+        _parse_distance_m(row.get("dist_to_hospitals_m")),
+        _parse_distance_m(row.get("dist_to_nightlife_m")),
+        _parse_distance_m(row.get("dist_to_pedestrian_zones_m")),
+        _parse_distance_m(row.get("dist_to_lakes_m")),
+        _parse_distance_m(row.get("dist_to_rivers_m")),
+        _parse_distance_m(row.get("dist_to_noisy_roads_m")),
+        _parse_distance_m(row.get("dist_to_noisy_trains_m")),
+        _parse_float(row.get("elevation_m")),
+        _parse_float(row.get("weighted_crime_per_1000")),
         1 if feature_values["balcony"] is True else 0 if feature_values["balcony"] is False else None,
         1 if feature_values["elevator"] is True else 0 if feature_values["elevator"] is False else None,
         1 if feature_values["parking"] is True else 0 if feature_values["parking"] is False else None,

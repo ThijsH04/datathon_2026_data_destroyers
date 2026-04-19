@@ -45,6 +45,8 @@ COMPONENT_BASE = {
     "feature_match": 2.5,
     "anchor_distance": 2.5,
     "structured_distance": 1.5,
+    "environment": 1.4,
+    "safety": 1.2,
     "price": 1.5,
     "object_category": 1.0,
     "image_availability": 0.4,
@@ -55,6 +57,8 @@ COMPONENT_BASE = {
 def rank_listings(
     candidates: list[dict[str, Any]],
     soft_facts: dict[str, Any],
+    *,
+    preserve_order: bool = False,
 ) -> list[RankedListingResult]:
     if not candidates:
         return []
@@ -95,6 +99,16 @@ def rank_listings(
             components["structured_distance"] = structured_score
             explanations["structured_distance"] = structured_reasons
 
+        environment_score, environment_reasons = _score_environment(candidate, preferences)
+        if environment_score:
+            components["environment"] = environment_score
+            explanations["environment"] = environment_reasons
+
+        safety_score, safety_reasons = _score_safety(candidate, preferences)
+        if safety_score:
+            components["safety"] = safety_score
+            explanations["safety"] = safety_reasons
+
         price_score, price_reasons = _score_price(
             candidate, preferences, soft_budget_hint,
         )
@@ -110,7 +124,6 @@ def rank_listings(
         image_score = _score_image_availability(candidate)
         if image_score:
             components["image_availability"] = image_score
-            explanations["image_availability"] = ["has photos"]
 
         completeness_score = _score_data_completeness(candidate)
         if completeness_score:
@@ -147,7 +160,8 @@ def rank_listings(
             )
         )
 
-    ranked.sort(key=lambda r: (-r.score, r.listing_id))
+    if not preserve_order:
+        ranked.sort(key=lambda r: (-r.score, r.listing_id))
     return ranked
 
 
@@ -262,64 +276,183 @@ def _score_anchor_distance(
 def _score_structured_distances(
     candidate: dict[str, Any], preferences: dict[str, float],
 ) -> tuple[float, list[str]]:
-    """Use the listing's precomputed distance fields when relevant preferences fire."""
+    """Use precomputed amenity access fields when relevant preferences fire."""
     parts: list[float] = []
     reasons: list[str] = []
 
-    def _meters_to_score(meters: Any) -> float | None:
-        if meters is None:
-            return None
-        try:
-            m = float(meters)
-        except (TypeError, ValueError):
-            return None
-        if m <= 0:
-            return 1.0
-        # 0 m → 1.0, 500 m → ~0.53, 1000 m → ~0.29, 2000+ m ≈ 0.08
-        return math.exp(-m / 800.0)
-
     if "near_transport" in preferences:
-        score = _meters_to_score(candidate.get("distance_public_transport"))
+        score = _mean_score(
+            _meters_to_score(candidate.get("dist_to_transit_m"), scale=650.0),
+            _meters_to_score(candidate.get("distance_public_transport"), scale=800.0),
+            _count_to_score(candidate.get("transit_count_500m"), target=5.0),
+        )
         if score:
             parts.append(score * preferences["near_transport"])
-            reasons.append("close to public transport")
+            stop = candidate.get("nearest_transit_name")
+            reasons.append(f"{stop} nearby" if stop else "close to public transport")
 
     if "near_school" in preferences or "family_friendly" in preferences:
         weight = max(
             preferences.get("near_school", 0.0),
             preferences.get("family_friendly", 0.0),
         )
-        distances = [
-            candidate.get("distance_school_1"),
-            candidate.get("distance_school_2"),
-            candidate.get("distance_kindergarten"),
-        ]
-        best = max(
-            (_meters_to_score(value) or 0.0 for value in distances), default=0.0,
+        score = _mean_score(
+            _meters_to_score(candidate.get("dist_to_schools_m"), scale=750.0),
+            _best_score(
+                _meters_to_score(candidate.get("distance_school_1"), scale=800.0),
+                _meters_to_score(candidate.get("distance_school_2"), scale=800.0),
+                _meters_to_score(candidate.get("distance_kindergarten"), scale=800.0),
+            ),
+            _count_to_score(candidate.get("schools_count_500m"), target=2.0),
+            _count_to_score(candidate.get("parks_count_500m"), target=3.0),
         )
-        if best:
-            parts.append(best * weight)
-            reasons.append("schools nearby")
+        if score:
+            parts.append(score * weight)
+            reasons.append("schools and family amenities nearby")
 
     if "central" in preferences:
-        score = _meters_to_score(candidate.get("distance_shop"))
+        score = _mean_score(
+            _meters_to_score(candidate.get("dist_to_shops_m"), scale=650.0),
+            _meters_to_score(candidate.get("distance_shop"), scale=800.0),
+            _count_to_score(candidate.get("shops_count_500m"), target=3.0),
+            _count_to_score(candidate.get("pedestrian_zones_count_500m"), target=5.0),
+        )
         if score:
             parts.append(score * preferences["central"])
-            reasons.append("amenities nearby")
+            reasons.append("shops and daily amenities nearby")
 
     if "quiet" in preferences:
-        # Quietness proxy: NOT on top of a transit line. Sweet spot 300-1500m.
-        dpt = candidate.get("distance_public_transport")
-        if isinstance(dpt, (int, float)) and dpt > 0:
-            if 300 <= dpt <= 1500:
-                parts.append(0.7 * preferences["quiet"])
-                reasons.append("off main transport lines")
-            elif dpt < 100:
-                parts.append(0.1 * preferences["quiet"])  # right on a tram line
+        score = _mean_score(
+            _far_meters_to_score(candidate.get("dist_to_noisy_roads_m"), scale=650.0),
+            _far_meters_to_score(candidate.get("dist_to_noisy_trains_m"), scale=650.0),
+            _low_count_to_score(candidate.get("nightlife_count_500m"), scale=10.0),
+            _far_meters_to_score(candidate.get("dist_to_nightlife_m"), scale=500.0),
+        )
+        if score:
+            parts.append(score * preferences["quiet"])
+            reasons.append("buffered from noise hotspots")
+
+    if "nightlife" in preferences:
+        score = _mean_score(
+            _count_to_score(candidate.get("nightlife_count_500m"), target=8.0),
+            _meters_to_score(candidate.get("dist_to_nightlife_m"), scale=450.0),
+        )
+        if score:
+            parts.append(score * preferences["nightlife"])
+            reasons.append("lively places nearby")
 
     if not parts:
         return 0.0, []
     return sum(parts) / len(parts), reasons
+
+
+def _score_environment(
+    candidate: dict[str, Any], preferences: dict[str, float],
+) -> tuple[float, list[str]]:
+    parts: list[float] = []
+    reasons: list[str] = []
+
+    if "green" in preferences or "garden" in preferences:
+        weight = max(preferences.get("green", 0.0), preferences.get("garden", 0.0))
+        score = _mean_score(
+            _meters_to_score(candidate.get("dist_to_parks_m"), scale=900.0),
+            _count_to_score(candidate.get("parks_count_500m"), target=3.0),
+        )
+        if score:
+            parts.append(score * weight)
+            reasons.append("parks and green space nearby")
+
+    if "near_water" in preferences or "view" in preferences:
+        weight = max(preferences.get("near_water", 0.0), preferences.get("view", 0.0) * 0.6)
+        score = _best_score(
+            _meters_to_score(candidate.get("dist_to_lakes_m"), scale=900.0),
+            _meters_to_score(candidate.get("dist_to_rivers_m"), scale=900.0),
+        )
+        if score:
+            parts.append(score * weight)
+            reasons.append("close to water")
+
+    if not parts:
+        return 0.0, []
+    return sum(parts) / len(parts), reasons
+
+
+def _score_safety(
+    candidate: dict[str, Any], preferences: dict[str, float],
+) -> tuple[float, list[str]]:
+    weight = preferences.get("safe", 0.0)
+    if weight <= 0:
+        return 0.0, []
+
+    crime = _to_float(candidate.get("weighted_crime_per_1000"))
+    if crime is None or crime < 0:
+        return 0.0, []
+
+    # Sparse enrichment: use only when present. The curve rewards lower crime
+    # without making missing crime data a negative signal.
+    score = 1.0 / (1.0 + crime / 700.0)
+    if score <= 0:
+        return 0.0, []
+    return score * weight, ["lower recorded crime nearby"]
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _meters_to_score(meters: Any, *, scale: float) -> float | None:
+    m = _to_float(meters)
+    if m is None:
+        return None
+    if m <= 0:
+        return 1.0
+    return math.exp(-m / scale)
+
+
+def _far_meters_to_score(meters: Any, *, scale: float) -> float | None:
+    m = _to_float(meters)
+    if m is None:
+        return None
+    if m <= 0:
+        return 0.0
+    return 1.0 - math.exp(-m / scale)
+
+
+def _count_to_score(count: Any, *, target: float) -> float | None:
+    value = _to_float(count)
+    if value is None:
+        return None
+    if value <= 0:
+        return 0.0
+    return 1.0 - math.exp(-value / target)
+
+
+def _low_count_to_score(count: Any, *, scale: float) -> float | None:
+    value = _to_float(count)
+    if value is None:
+        return None
+    if value <= 0:
+        return 1.0
+    return math.exp(-value / scale)
+
+
+def _mean_score(*scores: float | None) -> float | None:
+    valid = [score for score in scores if score is not None]
+    if not valid:
+        return None
+    return sum(valid) / len(valid)
+
+
+def _best_score(*scores: float | None) -> float | None:
+    valid = [score for score in scores if score is not None]
+    if not valid:
+        return None
+    return max(valid)
 
 
 def _score_price(
@@ -441,6 +574,8 @@ def _format_reason(
         "text_match",           # "bright, modern" — the soft ask verbatim
         "feature_match",        # concrete features the user wanted
         "structured_distance",  # "close to transport" with a distance
+        "environment",
+        "safety",
         "price",                # "below the Zürich median"
         "object_category",
         "image_availability",

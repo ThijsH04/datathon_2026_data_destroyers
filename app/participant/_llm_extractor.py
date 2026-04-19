@@ -29,6 +29,7 @@ Expected output schema (see `_TOOL_SCHEMA` below):
           "latitude": float | None,
           "longitude": float | None,
           "radius_km": float | None,
+          "sort_by": "price_asc"|"price_desc"|"rooms_asc"|"rooms_desc"|None,
       },
       "soft": {
           "preferences": [
@@ -92,6 +93,10 @@ SOFT_SIGNAL_VOCAB: list[str] = [
     "cozy",
     "central",
     "view",
+    "safe",
+    "green",
+    "near_water",
+    "nightlife",
     "family_friendly",
     "near_transport",
     "near_school",
@@ -165,6 +170,15 @@ _TOOL_SCHEMA: dict[str, Any] = {
                     "latitude": {"type": "number"},
                     "longitude": {"type": "number"},
                     "radius_km": {"type": "number"},
+                    "sort_by": {
+                        "type": "string",
+                        "enum": ["price_asc", "price_desc", "rooms_asc", "rooms_desc"],
+                        "description": (
+                            "Only for explicit ordering requests: cheapest/lowest price "
+                            "-> price_asc, most expensive/highest price -> price_desc, "
+                            "largest/most rooms -> rooms_desc, smallest/fewest rooms -> rooms_asc."
+                        ),
+                    },
                 },
                 "required": [],
             },
@@ -268,6 +282,10 @@ Examples:
 - "3+ rooms" / "at least 3 rooms" → min_rooms=3 only (hard, no upper)
 - "studio" → max_rooms=1.5 (hard)
 - "family flat" → min_rooms=3 (hard — strong implication, no hedge)
+- "cheapest first" / "lowest price" → sort_by="price_asc"
+- "largest first" / "most rooms" → sort_by="rooms_desc"
+- Do NOT emit sort_by for soft phrases like "cheap", "affordable", "spacious", or "not too expensive".
+- "safe area", "near parks", "close to the lake", "lively nightlife" are SOFT preferences, not hard filters.
 
 # CITIES & LANDMARKS
 - Normalize to canonical Swiss names: Zurich→Zürich, Geneva→Genève, Lucerne→Luzern.
@@ -294,8 +312,9 @@ Mentioning something FIRST in a query usually signals priority — weight it hig
 When two signals conflict (e.g. "cheap BUT central"), list them in `conflicts` and weight both similarly.
 
 # SOFT SIGNAL VOCABULARY (use these exact keys)
-bright, modern, quiet, spacious, cozy, central, view, family_friendly, near_transport, \
-near_school, luxury, cheap, balcony_pref, parking_pref, elevator_pref, garden, pet_pref, new_pref, furnished, student
+bright, modern, quiet, spacious, cozy, central, view, safe, green, near_water, nightlife, \
+family_friendly, near_transport, near_school, luxury, cheap, balcony_pref, parking_pref, \
+elevator_pref, garden, pet_pref, new_pref, furnished, student
 
 # HARD FEATURE VOCABULARY (use these exact keys)
 balcony, elevator, parking, garage, fireplace, child_friendly, pets_allowed, \
@@ -405,6 +424,7 @@ def _sanitize(payload: dict[str, Any]) -> dict[str, Any]:
         "latitude",
         "longitude",
         "radius_km",
+        "sort_by",
     ):
         value = hard.get(key)
         if value is None:

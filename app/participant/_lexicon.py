@@ -116,6 +116,26 @@ SOFT_KEYWORDS: dict[str, list[str]] = {
         "quiet", "calm", "peaceful", "ruhig", "ruhige", "ruhiger",
         "abgelegen", "tranquille", "street noise", "lärm", "laerm",
     ],
+    "safe": [
+        "safe", "safety", "secure", "low crime", "crime", "safer",
+        "sicher", "sicherheit", "sichere", "sicheres", "kriminalität", "kriminalitaet",
+        "sécurisé", "securise", "sécurité", "securite",
+    ],
+    "green": [
+        "green", "park", "parks", "nature", "nature nearby", "green area",
+        "grün", "gruen", "park", "parks", "natur", "naherholung", "erholung",
+        "verdure", "parc", "nature",
+    ],
+    "near_water": [
+        "lake", "river", "water", "waterfront", "lakeside", "riverside",
+        "see", "fluss", "ufer", "wasser", "seesicht", "seeufer",
+        "lac", "rivière", "riviere", "eau",
+    ],
+    "nightlife": [
+        "nightlife", "bars", "bar", "restaurants", "lively", "vibrant",
+        "going out", "ausgehen", "bars", "restaurants", "lebendig", "belebt",
+        "sortir", "animé", "anime",
+    ],
     "central": [
         "central", "zentral", "in the center", "city center", "stadtmitte",
         "mitten in", "innenstadt", "centre", "downtown",

@@ -125,6 +125,27 @@ def search_listings(db_path: Path, filters: HardFilterParams) -> list[dict[str, 
             distance_kindergarten,
             distance_school_1,
             distance_school_2,
+            transit_count_500m,
+            shops_count_500m,
+            parks_count_500m,
+            schools_count_500m,
+            hospitals_count_500m,
+            nightlife_count_500m,
+            pedestrian_zones_count_500m,
+            dist_to_transit_m,
+            nearest_transit_name,
+            dist_to_shops_m,
+            dist_to_parks_m,
+            dist_to_schools_m,
+            dist_to_hospitals_m,
+            dist_to_nightlife_m,
+            dist_to_pedestrian_zones_m,
+            dist_to_lakes_m,
+            dist_to_rivers_m,
+            dist_to_noisy_roads_m,
+            dist_to_noisy_trains_m,
+            elevation_m,
+            weighted_crime_per_1000,
             features_json,
             offer_type,
             object_category,
@@ -164,6 +185,8 @@ def search_listings(db_path: Path, filters: HardFilterParams) -> list[dict[str, 
 
         nearby_rows.sort(key=lambda item: (item[0], item[1]["listing_id"]))
         parsed_rows = [row for _, row in nearby_rows]
+        if filters.sort_by:
+            parsed_rows.sort(key=_row_sort_key(filters.sort_by))
 
     return parsed_rows[filters.offset : filters.offset + filters.limit]
 
@@ -232,3 +255,31 @@ def _sort_clause(sort_by: str | None) -> str:
     if sort_by == "rooms_desc":
         return "rooms DESC NULLS LAST, listing_id ASC"
     return "listing_id ASC"
+
+
+def _row_sort_key(sort_by: str):
+    if sort_by == "price_asc":
+        return lambda row: (
+            row.get("price") is None,
+            row.get("price") or 0,
+            row["listing_id"],
+        )
+    if sort_by == "price_desc":
+        return lambda row: (
+            row.get("price") is None,
+            -(row.get("price") or 0),
+            row["listing_id"],
+        )
+    if sort_by == "rooms_asc":
+        return lambda row: (
+            row.get("rooms") is None,
+            row.get("rooms") or 0,
+            row["listing_id"],
+        )
+    if sort_by == "rooms_desc":
+        return lambda row: (
+            row.get("rooms") is None,
+            -(row.get("rooms") or 0),
+            row["listing_id"],
+        )
+    return lambda row: row["listing_id"]
