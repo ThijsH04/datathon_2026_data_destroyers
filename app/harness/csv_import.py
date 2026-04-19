@@ -17,6 +17,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             scrape_source TEXT,
             title TEXT NOT NULL,
             description TEXT,
+            processed_description TEXT,
             street TEXT,
             city TEXT,
             postal_code TEXT,
@@ -73,6 +74,7 @@ def import_csvs(connection: sqlite3.Connection, csv_paths: Iterable[Path]) -> No
                     scrape_source,
                     title,
                     description,
+                    processed_description,
                     street,
                     city,
                     postal_code,
@@ -109,7 +111,7 @@ def import_csvs(connection: sqlite3.Connection, csv_paths: Iterable[Path]) -> No
                     location_address_json,
                     orig_data_json,
                     raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )

@@ -39,6 +39,7 @@ class ListingData(BaseModel):
     id: str
     title: str
     description: str | None = None
+    processed_description: str | None = None
     street: str | None = None
     city: str | None = None
     postal_code: str | None = None
