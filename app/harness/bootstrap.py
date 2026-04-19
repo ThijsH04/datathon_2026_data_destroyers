@@ -38,7 +38,16 @@ def _csv_paths(raw_data_dir: Path) -> list[Path]:
     if not raw_data_dir.exists() or not raw_data_dir.is_dir():
         raise FileNotFoundError(f"Raw data directory not found: {raw_data_dir}")
 
-    csv_paths = sorted(path for path in raw_data_dir.glob("*.csv") if path.is_file())
+    all_csv_paths = sorted(path for path in raw_data_dir.glob("*.csv") if path.is_file())
+    enriched_paths = [path for path in all_csv_paths if path.name.endswith("_enriched.csv")]
+
+    # Prefer final enriched listing exports when available and skip non-listing helper CSVs.
+    csv_paths = enriched_paths or [
+        path
+        for path in all_csv_paths
+        if path.name not in {"house_type.csv", "selected_zh.csv"}
+    ]
+
     if not csv_paths:
         raise FileNotFoundError(f"No CSV files found in raw data directory: {raw_data_dir}")
     return csv_paths
