@@ -150,7 +150,7 @@ def rank_listings(
             explanations["object_category"] = category_reasons
 
         img_features = img_lookup.get(str(candidate["listing_id"]))
-        visual_score, visual_reasons = _score_image_visual(img_features, preferences)
+        visual_score, visual_reasons = _score_image_visual(img_features, preferences, soft_facts.get("raw_query", ""))
         if visual_score:
             components["image_visual"] = visual_score
             explanations["image_visual"] = visual_reasons
@@ -569,9 +569,26 @@ def _load_image_features(
         return {}
 
 
+_CITY_VIEW_WORDS  = {"city", "urban", "skyline", "downtown", "stadt"}
+_GREEN_VIEW_WORDS = {"green", "nature", "park", "garden", "forest", "wald", "natur"}
+_MOUNTAIN_VIEW_WORDS = {"mountain", "alp", "alpine", "berg", "peak"}
+
+
+def _view_threshold_for_query(raw_query: str) -> set[str]:
+    q = raw_query.lower()
+    if any(w in q for w in _CITY_VIEW_WORDS):
+        return {"cityscape"}
+    if any(w in q for w in _MOUNTAIN_VIEW_WORDS):
+        return {"mountain"}
+    if any(w in q for w in _GREEN_VIEW_WORDS):
+        return {"greenery"}
+    return {"mountain", "greenery", "cityscape"}  # any view
+
+
 def _score_image_visual(
     img: dict[str, Any] | None,
     preferences: dict[str, float],
+    raw_query: str = "",
 ) -> tuple[float, list[str]]:
     """Score a listing's image features against the user's soft preferences."""
     if not img or not preferences:
@@ -587,6 +604,9 @@ def _score_image_visual(
 
     for pref_key, pref_weight in active.items():
         col, threshold = _PREF_TO_IMAGE[pref_key]
+        # Refine view threshold based on what kind of view the user asked for
+        if pref_key == "view":
+            threshold = _view_threshold_for_query(raw_query)
         value = img.get(col)
         if value is None:
             continue
