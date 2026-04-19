@@ -30,6 +30,8 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from app.models.schemas import ListingData, RankedListingResult
@@ -49,8 +51,25 @@ COMPONENT_BASE = {
     "safety": 1.2,
     "price": 1.5,
     "object_category": 1.0,
+    "image_visual": 2.0,   # image-derived visual quality signals
     "image_availability": 0.4,
     "data_completeness": 0.3,
+}
+
+# Maps soft-fact preference key → (image_db_column, passing_values_or_min_score)
+# Score = 1.0 if passes, 0.5 if column present but not passing, 0.0 if missing.
+_PREF_TO_IMAGE: dict[str, tuple[str, Any]] = {
+    "bright":       ("brightness_score",    0.65),
+    "modern":       ("modernity_score",     0.65),
+    "spacious":     ("spaciousness_score",  0.65),
+    "luxury":       ("renovation_quality",  {"excellent"}),
+    "view":         ("view_type",           {"mountain", "greenery", "cityscape"}),
+    "green":        ("view_type",           {"greenery"}),
+    "near_water":   ("view_type",           {"mountain"}),   # proxy: open views
+    "balcony_pref": ("balcony_visible",     1),
+    "garden":       ("garden_size",         {"large", "medium"}),
+    "furnished":    ("is_furnished",        {"furnished", "partially_furnished"}),
+    "cozy":         ("is_furnished",        {"furnished"}),
 }
 
 
@@ -59,6 +78,7 @@ def rank_listings(
     soft_facts: dict[str, Any],
     *,
     preserve_order: bool = False,
+    image_features_db_path: Path | None = None,
 ) -> list[RankedListingResult]:
     if not candidates:
         return []
@@ -73,6 +93,14 @@ def rank_listings(
     dominant: str | None = soft_facts.get("dominant_signal")
 
     use_geometric = bool(conflicts)
+
+    # Load image features for all candidates in one DB query
+    img_lookup: dict[str, dict[str, Any]] = {}
+    if image_features_db_path and preferences:
+        img_lookup = _load_image_features(
+            [str(c["listing_id"]) for c in candidates],
+            image_features_db_path,
+        )
 
     scored: list[tuple[float, dict[str, list[str]], dict[str, Any]]] = []
     for candidate in candidates:
@@ -120,6 +148,12 @@ def rank_listings(
         if category_score:
             components["object_category"] = category_score
             explanations["object_category"] = category_reasons
+
+        img_features = img_lookup.get(str(candidate["listing_id"]))
+        visual_score, visual_reasons = _score_image_visual(img_features, preferences)
+        if visual_score:
+            components["image_visual"] = visual_score
+            explanations["image_visual"] = visual_reasons
 
         image_score = _score_image_availability(candidate)
         if image_score:
@@ -513,6 +547,65 @@ def _score_object_category(
     if "Wohnung" in hints and candidate.get("rooms"):
         return 0.5, []
     return 0.0, []
+
+
+def _load_image_features(
+    listing_ids: list[str],
+    db_path: Path,
+) -> dict[str, dict[str, Any]]:
+    if not db_path.exists() or not listing_ids:
+        return {}
+    try:
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        placeholders = ",".join("?" * len(listing_ids))
+        rows = conn.execute(
+            f"SELECT * FROM listing_images WHERE listing_id IN ({placeholders}) AND error IS NULL",
+            listing_ids,
+        ).fetchall()
+        conn.close()
+        return {r["listing_id"]: dict(r) for r in rows}
+    except Exception:
+        return {}
+
+
+def _score_image_visual(
+    img: dict[str, Any] | None,
+    preferences: dict[str, float],
+) -> tuple[float, list[str]]:
+    """Score a listing's image features against the user's soft preferences."""
+    if not img or not preferences:
+        return 0.0, []
+
+    active = {k: v for k, v in preferences.items() if k in _PREF_TO_IMAGE}
+    if not active:
+        return 0.0, []
+
+    total_weight = sum(active.values())
+    earned = 0.0
+    reasons: list[str] = []
+
+    for pref_key, pref_weight in active.items():
+        col, threshold = _PREF_TO_IMAGE[pref_key]
+        value = img.get(col)
+        if value is None:
+            continue
+        if isinstance(threshold, set):
+            hit = value in threshold
+        elif isinstance(threshold, (int, float)):
+            hit = isinstance(value, (int, float)) and value >= threshold
+        else:
+            hit = value == threshold
+
+        if hit:
+            earned += pref_weight
+            reasons.append(pref_key.replace("_pref", "").replace("_", " "))
+
+    if total_weight == 0:
+        return 0.0, []
+
+    score = earned / total_weight
+    return round(score, 4), reasons
 
 
 def _score_image_availability(candidate: dict[str, Any]) -> float:

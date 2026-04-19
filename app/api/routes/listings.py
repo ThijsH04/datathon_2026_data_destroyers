@@ -27,6 +27,7 @@ def listings(request: ListingsQueryRequest) -> ListingsResponse:
         query=request.query,
         limit=request.limit,
         offset=request.offset,
+        image_features_db_path=settings.image_features_db_path,
     )
 
 

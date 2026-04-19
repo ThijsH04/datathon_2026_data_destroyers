@@ -27,6 +27,7 @@ def query_from_text(
     query: str,
     limit: int,
     offset: int,
+    image_features_db_path: Path | None = None,
 ) -> ListingsResponse:
     hard_facts = extract_hard_facts(query)
     soft_facts = extract_soft_facts(query)
@@ -44,6 +45,7 @@ def query_from_text(
         candidates,
         soft_facts,
         preserve_order=hard_facts.sort_by is not None,
+        image_features_db_path=image_features_db_path,
     )
     window = ranked[offset : offset + limit]
 

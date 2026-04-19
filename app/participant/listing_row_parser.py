@@ -321,7 +321,7 @@ def prepare_listing_row(row: dict[str, str]) -> tuple[Any, ...]:
         _parse_int(row.get("nightlife_count_500m")),
         _parse_int(row.get("pedestrian_zones_count_500m")),
         _parse_distance_m(row.get("dist_to_transit_m")),
-        _clean_text(row.get("nearest_transit_name")),
+        _clean_text(row.get("nearest_transit_name"), False),
         _parse_distance_m(row.get("dist_to_shops_m")),
         _parse_distance_m(row.get("dist_to_parks_m")),
         _parse_distance_m(row.get("dist_to_schools_m")),
