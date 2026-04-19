@@ -1,4 +1,24 @@
+"""Hard-fact extractor.
+
+Primary path: a single Claude call (see `_llm_extractor.extract_combined`)
+returns both hard filters and soft preferences. The cached result is reused
+by the soft extractor in the same request, so we only pay for one LLM call
+per unique query.
+
+Fallback path: rule-based bilingual parser. Triggers whenever the LLM path
+is unavailable (no API key, SDK missing, network error, malformed output).
+The fallback is conservative — it only marks something as a hard constraint
+when the wording is unambiguous. Soft hints stay for the ranker.
+
+Hard-filter precision is the make-or-break automated metric, so we err on
+the side of NOT over-constraining.
+"""
+
 from __future__ import annotations
+
+import re
+import unicodedata
+from typing import Iterable
 
 from app.models.schemas import HardFilters
 import boto3

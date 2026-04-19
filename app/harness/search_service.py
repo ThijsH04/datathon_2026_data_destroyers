@@ -11,6 +11,12 @@ from app.participant.soft_fact_extraction import extract_soft_facts
 from app.participant.soft_filtering import filter_soft_facts
 
 
+# Size of the candidate pool we hand to the ranker. The API caller still gets
+# back at most `limit` listings; a wider pool just gives the ranker more room
+# to reorder by soft signals. 500 is a safe ceiling for SQLite locally.
+_CANDIDATE_POOL_SIZE = 500
+
+
 def filter_hard_facts(db_path: Path, hard_facts: HardFilters) -> list[dict[str, Any]]:
     return search_listings(db_path, to_hard_filter_params(hard_facts))
 
@@ -23,14 +29,35 @@ def query_from_text(
     offset: int,
 ) -> ListingsResponse:
     hard_facts = extract_hard_facts(query)
-    hard_facts.limit = limit
-    hard_facts.offset = offset
     soft_facts = extract_soft_facts(query)
-    candidates = filter_hard_facts(db_path, hard_facts)
+
+    # Fetch a wide candidate pool so the ranker can reorder by soft signals,
+    # then slice the ranked result down to the caller's window.
+    pool_filters = hard_facts.model_copy(update={
+        "limit": _CANDIDATE_POOL_SIZE,
+        "offset": 0,
+    })
+    candidates = filter_hard_facts(db_path, pool_filters)
     candidates = filter_soft_facts(candidates, soft_facts)
+
+    ranked = rank_listings(
+        candidates,
+        soft_facts,
+        preserve_order=hard_facts.sort_by is not None,
+    )
+    window = ranked[offset : offset + limit]
+
     return ListingsResponse(
-        listings=rank_listings(candidates, soft_facts),
-        meta={},
+        listings=window,
+        meta={
+            "query": query,
+            "hard_facts": hard_facts.model_dump(exclude_none=True),
+            "soft_facts": _meta_soft_facts(soft_facts),
+            "candidates_considered": len(candidates),
+            "total_ranked": len(ranked),
+            "limit": limit,
+            "offset": offset,
+        },
     )
 
 
@@ -44,8 +71,15 @@ def query_from_filters(
     candidates = filter_hard_facts(db_path, structured_hard_facts)
     candidates = filter_soft_facts(candidates, soft_facts)
     return ListingsResponse(
-        listings=rank_listings(candidates, soft_facts),
-        meta={},
+        listings=rank_listings(
+            candidates,
+            soft_facts,
+            preserve_order=structured_hard_facts.sort_by is not None,
+        ),
+        meta={
+            "hard_facts": structured_hard_facts.model_dump(exclude_none=True),
+            "candidates_considered": len(candidates),
+        },
     )
 
 
@@ -68,3 +102,10 @@ def to_hard_filter_params(hard_facts: HardFilters) -> HardFilterParams:
         offset=hard_facts.offset,
         sort_by=hard_facts.sort_by,
     )
+
+
+def _meta_soft_facts(soft_facts: dict[str, Any]) -> dict[str, Any]:
+    """Strip noisy fields from the soft-facts meta payload."""
+    meta = dict(soft_facts)
+    meta.pop("tokens", None)
+    return meta

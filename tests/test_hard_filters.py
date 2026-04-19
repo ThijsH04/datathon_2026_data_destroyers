@@ -89,3 +89,42 @@ def test_hard_filter_by_coordinates_and_radius_returns_nearby_rows(tmp_path: Pat
 
     assert rows
     assert any(row["listing_id"] == seed["listing_id"] for row in rows)
+
+
+def test_hard_filter_sort_by_price_ascending(tmp_path: Path) -> None:
+    db_path = build_database(tmp_path)
+
+    rows = search_listings(
+        db_path,
+        HardFilterParams(city=["Winterthur"], sort_by="price_asc", limit=20),
+    )
+
+    prices = [row["price"] for row in rows if row.get("price") is not None]
+    assert rows
+    assert prices == sorted(prices)
+
+
+def test_hard_filter_radius_preserves_explicit_price_sort(tmp_path: Path) -> None:
+    db_path = build_database(tmp_path)
+
+    seed_rows = search_listings(db_path, HardFilterParams(city=["Winterthur"], limit=50))
+    seed = next(
+        row
+        for row in seed_rows
+        if row.get("latitude") is not None and row.get("longitude") is not None
+    )
+
+    rows = search_listings(
+        db_path,
+        HardFilterParams(
+            latitude=seed["latitude"],
+            longitude=seed["longitude"],
+            radius_km=10.0,
+            sort_by="price_asc",
+            limit=20,
+        ),
+    )
+
+    prices = [row["price"] for row in rows if row.get("price") is not None]
+    assert rows
+    assert prices == sorted(prices)

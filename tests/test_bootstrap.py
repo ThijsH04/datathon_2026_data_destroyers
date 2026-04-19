@@ -4,6 +4,8 @@ from pathlib import Path
 import csv
 import json
 
+import pytest
+
 from app.harness.bootstrap import bootstrap_database
 from app.participant.listing_row_parser import _prepare_listing_row
 
@@ -136,6 +138,9 @@ def test_bootstrap_imports_sred_rows_when_bundle_is_available(tmp_path: Path) ->
 def test_bootstrap_makes_local_sred_images_available(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
     raw_data_dir = repo_root / "raw_data"
+    if not (raw_data_dir / "sred_images").exists() and not (raw_data_dir / "SRED_data(1)").exists():
+        pytest.skip("local SRED image bundle is not present in this raw_data layout")
+
     db_path = tmp_path / "listings.db"
 
     bootstrap_database(db_path=db_path, raw_data_dir=raw_data_dir)
@@ -182,6 +187,11 @@ def test_prepare_listing_row_extracts_comparis_style_features() -> None:
         "geo_lat": "47.37",
         "geo_lng": "8.54",
         "prop_child_friendly": "true",
+        "transit_count_500m": "12",
+        "dist_to_transit_m": "999999",
+        "nearest_transit_name": "Main Stop",
+        "dist_to_shops_m": "135",
+        "weighted_crime_per_1000": "248.4",
     }
 
     prepared = _prepare_listing_row(row)
@@ -195,22 +205,27 @@ def test_prepare_listing_row_extracts_comparis_style_features() -> None:
     assert prepared[7] == "8001"
     assert prepared[8] == "ZH"
     assert prepared[9] == 2250
-    assert prepared[20] == 1
-    assert prepared[21] == 1
-    assert prepared[22] == 1
-    assert prepared[23] == 1
-    assert prepared[25] == 1
-    assert prepared[26] == 1
-    assert prepared[28] == 1
-    assert prepared[29] == 1
-    assert prepared[30] == 1
-    assert prepared[31] == 1
-    assert prepared[33] == "RENT"
-    assert prepared[34] == "Wohnung"
-    assert prepared[35] == "Wohnung"
-    assert prepared[36] == "https://example.com/listing"
-    assert {"balcony", "elevator", "parking"} <= set(json.loads(prepared[32]))
-    assert isinstance(json.loads(prepared[37]), dict)
+    assert prepared[20] == 12
+    assert prepared[27] is None
+    assert prepared[28] == "Main Stop"
+    assert prepared[29] == 135
+    assert prepared[40] == 248.4
+    assert prepared[41] == 1
+    assert prepared[42] == 1
+    assert prepared[43] == 1
+    assert prepared[44] == 1
+    assert prepared[46] == 1
+    assert prepared[47] == 1
+    assert prepared[49] == 1
+    assert prepared[50] == 1
+    assert prepared[51] == 1
+    assert prepared[52] == 1
+    assert prepared[54] == "RENT"
+    assert prepared[55] == "Wohnung"
+    assert prepared[56] == "Wohnung"
+    assert prepared[57] == "https://example.com/listing"
+    assert {"balcony", "elevator", "parking"} <= set(json.loads(prepared[53]))
+    assert isinstance(json.loads(prepared[58]), dict)
 
 
 def test_prepare_listing_row_uses_robinreal_flat_flags_without_fabricating_unknowns() -> None:
@@ -260,16 +275,16 @@ def test_prepare_listing_row_uses_robinreal_flat_flags_without_fabricating_unkno
     assert prepared[7] == "9015"
     assert prepared[8] is None
     assert prepared[9] == 2250
-    assert prepared[20] == 0
-    assert prepared[21] == 0
-    assert prepared[22] == 1
-    assert prepared[23] == 0
-    assert prepared[24] == 0
-    assert prepared[25] == 0
-    assert prepared[26] == 1
-    assert prepared[28] == 0
-    assert prepared[29] is None
-    assert prepared[30] is None
-    assert prepared[31] is None
-    assert prepared[33] == "RENT"
-    assert "parking" in json.loads(prepared[32])
+    assert prepared[41] == 0
+    assert prepared[42] == 0
+    assert prepared[43] == 1
+    assert prepared[44] == 0
+    assert prepared[45] == 0
+    assert prepared[46] == 0
+    assert prepared[47] == 1
+    assert prepared[49] == 0
+    assert prepared[50] is None
+    assert prepared[51] is None
+    assert prepared[52] is None
+    assert prepared[54] == "RENT"
+    assert "parking" in json.loads(prepared[53])

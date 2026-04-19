@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 
@@ -73,8 +74,42 @@ def test_post_listings_search_filter_applies_explicit_hard_filters(tmp_path: Pat
     )
 
 
+def test_post_listings_search_filter_honors_sort_by(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    os.environ["LISTINGS_RAW_DATA_DIR"] = str(repo_root / "raw_data")
+    os.environ["LISTINGS_DB_PATH"] = str(tmp_path / "listings.db")
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/listings/search/filter",
+            json={
+                "hard_filters": {
+                    "city": ["Winterthur"],
+                    "limit": 10,
+                    "sort_by": "price_asc",
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    prices = [
+        item["listing"]["price_chf"]
+        for item in body["listings"]
+        if item["listing"].get("price_chf") is not None
+    ]
+    assert body["listings"]
+    assert prices == sorted(prices)
+
+
 def test_raw_data_images_are_served_from_local_static_mount(tmp_path: Path) -> None:
     repo_root = Path(__file__).resolve().parents[1]
+    image_path = repo_root / "raw_data" / "sred_images" / "4154142.jpeg"
+    if not image_path.exists():
+        pytest.skip("local SRED image bundle is not present in this raw_data layout")
+
     os.environ["LISTINGS_RAW_DATA_DIR"] = str(repo_root / "raw_data")
     os.environ["LISTINGS_DB_PATH"] = str(tmp_path / "listings.db")
 
